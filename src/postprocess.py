@@ -37,12 +37,9 @@ def iou(bbox1, bbox2):
     """
     intersection = Rect(bbox1).intersect(bbox2)
     union = Rect(bbox1).include_rect(bbox2)
-    
+
     union_area = union.get_area()
-    if union_area > 0:
-        return intersection.get_area() / union.get_area()
-    
-    return 0
+    return intersection.get_area() / union.get_area() if union_area > 0 else 0
 
 
 def iob(bbox1, bbox2):
@@ -50,12 +47,9 @@ def iob(bbox1, bbox2):
     Compute the intersection area over box area, for bbox1.
     """
     intersection = Rect(bbox1).intersect(bbox2)
-    
+
     bbox1_area = Rect(bbox1).get_area()
-    if bbox1_area > 0:
-        return intersection.get_area() / bbox1_area
-    
-    return 0
+    return intersection.get_area() / bbox1_area if bbox1_area > 0 else 0
 
 
 def objects_to_cells(table, objects_in_table, tokens_in_table, class_map, class_thresholds):
@@ -90,8 +84,6 @@ def objects_to_table_structures(table_object, objects_in_table, tokens_in_table,
 
     page_num = table_object['page_num']
 
-    table_structures = {}
-
     columns = [obj for obj in objects_in_table if class_names[obj['label']] == 'table column']
     rows = [obj for obj in objects_in_table if class_names[obj['label']] == 'table row']
     headers = [obj for obj in objects_in_table if class_names[obj['label']] == 'table column header']
@@ -123,7 +115,7 @@ def objects_to_table_structures(table_object, objects_in_table, tokens_in_table,
     row_rect = Rect()
     for obj in rows:
         row_rect.include_rect(obj['bbox'])
-    column_rect = Rect() 
+    column_rect = Rect()
     for obj in columns:
         column_rect.include_rect(obj['bbox'])
     table_object['row_column_bbox'] = [column_rect[0], row_rect[1], column_rect[2], row_rect[3]]
@@ -133,11 +125,12 @@ def objects_to_table_structures(table_object, objects_in_table, tokens_in_table,
     columns = align_columns(columns, table_object['row_column_bbox'])
     rows = align_rows(rows, table_object['row_column_bbox'])
 
-    table_structures['rows'] = rows
-    table_structures['columns'] = columns
-    table_structures['headers'] = headers
-    table_structures['supercells'] = supercells
-
+    table_structures = {
+        'rows': rows,
+        'columns': columns,
+        'headers': headers,
+        'supercells': supercells,
+    }
     if len(rows) > 0 and len(columns) > 1:
         table_structures = refine_table_structures(table_object['bbox'], table_structures, tokens_in_table, class_thresholds)
 
@@ -186,23 +179,26 @@ def nms_by_containment(container_objects, package_objects, overlap_threshold=0.5
     """
     container_objects = sort_objects_by_score(container_objects)
     num_objects = len(container_objects)
-    suppression = [False for obj in container_objects]
+    suppression = [False for _ in container_objects]
 
     packages_by_container, _, _ = slot_into_containers(container_objects, package_objects, overlap_threshold=overlap_threshold,
                                                  unique_assignment=True, forced_assignment=False)
 
     for object2_num in range(1, num_objects):
         object2_packages = set(packages_by_container[object2_num])
-        if len(object2_packages) == 0:
+        if not object2_packages:
             suppression[object2_num] = True
         for object1_num in range(object2_num):
             if not suppression[object1_num]:
                 object1_packages = set(packages_by_container[object1_num])
-                if len(object2_packages.intersection(object1_packages)) > 0:
+                if object2_packages.intersection(object1_packages):
                     suppression[object2_num] = True
 
-    final_objects = [obj for idx, obj in enumerate(container_objects) if not suppression[idx]]
-    return final_objects
+    return [
+        obj
+        for idx, obj in enumerate(container_objects)
+        if not suppression[idx]
+    ]
 
 
 def slot_into_containers(container_objects, package_objects, overlap_threshold=0.5,
@@ -212,8 +208,8 @@ def slot_into_containers(container_objects, package_objects, overlap_threshold=0
     """
     best_match_scores = []
 
-    container_assignments = [[] for container in container_objects]
-    package_assignments = [[] for package in package_objects]
+    container_assignments = [[] for _ in container_objects]
+    package_assignments = [[] for _ in package_objects]
 
     if len(container_objects) == 0 or len(package_objects) == 0:
         return container_assignments, package_assignments, best_match_scores
@@ -222,7 +218,7 @@ def slot_into_containers(container_objects, package_objects, overlap_threshold=0
     for package_num, package in enumerate(package_objects):
         match_scores = []
         package_rect = Rect(package['bbox'])
-        package_area = package_rect.get_area()        
+        package_area = package_rect.get_area()
         for container_num, container in enumerate(container_objects):
             container_rect = Rect(container['bbox'])
             intersect_area = container_rect.intersect(package['bbox']).get_area()
@@ -239,12 +235,11 @@ def slot_into_containers(container_objects, package_objects, overlap_threshold=0
 
         if not unique_assignment: # slot package into all eligible slots
             for match_score in sorted_match_scores[1:]:
-                if match_score['score'] >= overlap_threshold:
-                    container_assignments[match_score['container_num']].append(package_num)
-                    package_assignments[package_num].append(match_score['container_num'])
-                else:
+                if match_score['score'] < overlap_threshold:
                     break
-            
+
+                container_assignments[match_score['container_num']].append(package_num)
+                package_assignments[package_num].append(match_score['container_num'])
     return container_assignments, package_assignments, best_match_scores
 
 
@@ -252,10 +247,7 @@ def sort_objects_by_score(objects, reverse=True):
     """
     Put any set of objects in order from high score to low score.
     """
-    if reverse:
-        sign = -1
-    else:
-        sign = 1
+    sign = -1 if reverse else 1
     return sorted(objects, key=lambda k: sign*k['score'])
 
 
@@ -286,11 +278,7 @@ def get_bbox_span_subset(spans, bbox, threshold=0.5):
 
     threshold: the fraction of the span that must overlap with the bbox.
     """
-    span_subset = []
-    for span in spans:
-        if overlaps(span['bbox'], bbox, threshold):
-            span_subset.append(span)
-    return span_subset
+    return [span for span in spans if overlaps(span['bbox'], bbox, threshold)]
 
 
 def overlaps(bbox1, bbox2, threshold=0.5):
@@ -309,18 +297,15 @@ def extract_text_from_spans(spans, join_with_space=True, remove_integer_superscr
     Convert a collection of page tokens/words/spans into a single text string.
     """
 
-    if join_with_space:
-        join_char = " "
-    else:
-        join_char = ""
+    join_char = " " if join_with_space else ""
     spans_copy = spans[:]
-    
+
     if remove_integer_superscripts:
         for span in spans:
-            if not 'flags' in span:
+            if 'flags' not in span:
                 continue
             flags = span['flags']
-            if flags & 2**0: # superscript flag
+            if flags & 2**0:
                 if is_int(span['text']):
                     spans_copy.remove(span)
                 else:
@@ -328,22 +313,31 @@ def extract_text_from_spans(spans, join_with_space=True, remove_integer_superscr
 
     if len(spans_copy) == 0:
         return ""
-    
+
     spans_copy.sort(key=lambda span: span['span_num'])
     spans_copy.sort(key=lambda span: span['line_num'])
     spans_copy.sort(key=lambda span: span['block_num'])
-    
+
     # Force the span at the end of every line within a block to have exactly one space
     # unless the line ends with a space or ends with a non-space followed by a hyphen
     line_texts = []
     line_span_texts = [spans_copy[0]['text']]
     for span1, span2 in zip(spans_copy[:-1], spans_copy[1:]):
-        if not span1['block_num'] == span2['block_num'] or not span1['line_num'] == span2['line_num']:
+        if (
+            span1['block_num'] != span2['block_num']
+            or span1['line_num'] != span2['line_num']
+        ):
             line_text = join_char.join(line_span_texts).strip()
-            if (len(line_text) > 0
-                    and not line_text[-1] == ' '
-                    and not (len(line_text) > 1 and line_text[-1] == "-" and not line_text[-2] == ' ')):
-                if not join_with_space:
+            if not join_with_space:
+                if (
+                    line_text != ""
+                    and line_text[-1] != ' '
+                    and (
+                        len(line_text) <= 1
+                        or line_text[-1] != "-"
+                        or line_text[-2] == ' '
+                    )
+                ):
                     line_text += ' '
             line_texts.append(line_text)
             line_span_texts = [span2['text']]
@@ -351,7 +345,7 @@ def extract_text_from_spans(spans, join_with_space=True, remove_integer_superscr
             line_span_texts.append(span2['text'])
     line_text = join_char.join(line_span_texts)
     line_texts.append(line_text)
-            
+
     return join_char.join(line_texts).strip()
 
 
@@ -379,9 +373,7 @@ def align_columns(columns, bbox):
             column['bbox'][1] = bbox[1]
             column['bbox'][3] = bbox[3]
     except Exception as err:
-        print("Could not align columns: {}".format(err))
-        pass
-
+        print(f"Could not align columns: {err}")
     return columns
 
 
@@ -395,9 +387,7 @@ def align_rows(rows, bbox):
             row['bbox'][0] = bbox[0]
             row['bbox'][2] = bbox[2]
     except Exception as err:
-        print("Could not align rows: {}".format(err))
-        pass
-
+        print(f"Could not align rows: {err}")
     return rows
 
 
@@ -458,7 +448,7 @@ def nms(objects, match_criteria="object2_overlap", match_threshold=0.05, keep_hi
     objects = sort_objects_by_score(objects, reverse=keep_higher)
 
     num_objects = len(objects)
-    suppression = [False for obj in objects]
+    suppression = [False for _ in objects]
 
     for object2_num in range(1, num_objects):
         object2_rect = Rect(objects[object2_num]['bbox'])
@@ -469,12 +459,12 @@ def nms(objects, match_criteria="object2_overlap", match_threshold=0.05, keep_hi
                 object1_area = object1_rect.get_area()
                 intersect_area = object1_rect.intersect(object2_rect).get_area()
                 try:
-                    if match_criteria=="object1_overlap":
-                        metric = intersect_area / object1_area
-                    elif match_criteria=="object2_overlap":
-                        metric = intersect_area / object2_area
-                    elif match_criteria=="iou":
+                    if match_criteria == "iou":
                         metric = intersect_area / (object1_area + object2_area - intersect_area)
+                    elif match_criteria == "object1_overlap":
+                        metric = intersect_area / object1_area
+                    elif match_criteria == "object2_overlap":
+                        metric = intersect_area / object2_area
                     if metric >= match_threshold:
                         suppression[object2_num] = True
                         break
@@ -509,7 +499,7 @@ def align_headers(headers, rows):
             if overlap_height / row_height >= 0.5:
                 header_row_nums.append(row_num)
 
-    if len(header_row_nums) == 0:
+    if not header_row_nums:
         return aligned_headers
 
     header_rect = Rect()
@@ -569,12 +559,12 @@ def align_supercells(supercells, rows, columns):
         # Supercell cannot span across the header boundary; eliminate whichever
         # group of rows is the smallest
         supercell['header'] = False
-        if len(intersecting_data_rows) > 0 and len(intersecting_header_rows) > 0:
+        if intersecting_data_rows and intersecting_header_rows:
             if len(intersecting_data_rows) > len(intersecting_header_rows):
                 intersecting_header_rows = set()
             else:
                 intersecting_data_rows = set()
-        if len(intersecting_header_rows) > 0:
+        if intersecting_header_rows:
             supercell['header'] = True
         elif 'span' in supercell:
             continue # Require span supercell to be in the header
@@ -616,8 +606,11 @@ def align_supercells(supercells, rows, columns):
         supercell['bbox'] = supercell_bbox
 
         # Only a true supercell if it joins across multiple rows or columns
-        if (len(intersecting_rows) > 0 and len(intersecting_cols) > 0
-                and (len(intersecting_rows) > 1 or len(intersecting_cols) > 1)):
+        if (
+            intersecting_rows
+            and intersecting_cols
+            and (len(intersecting_rows) > 1 or len(intersecting_cols) > 1)
+        ):
             supercell['row_numbers'] = list(intersecting_rows)
             supercell['column_numbers'] = intersecting_cols
             aligned_supercells.append(supercell)
@@ -629,10 +622,18 @@ def align_supercells(supercells, rows, columns):
                                      'score': supercell['score'], 'propagated': True}
                     new_supercell_columns = [columns[idx] for idx in supercell['column_numbers']]
                     new_supercell_rows = [rows[idx] for idx in supercell['row_numbers']]
-                    bbox = [min([column['bbox'][0] for column in new_supercell_columns]),
-                            min([row['bbox'][1] for row in new_supercell_rows]),
-                            max([column['bbox'][2] for column in new_supercell_columns]),
-                            max([row['bbox'][3] for row in new_supercell_rows])]
+                    bbox = [
+                        min(
+                            column['bbox'][0]
+                            for column in new_supercell_columns
+                        ),
+                        min(row['bbox'][1] for row in new_supercell_rows),
+                        max(
+                            column['bbox'][2]
+                            for column in new_supercell_columns
+                        ),
+                        max(row['bbox'][3] for row in new_supercell_rows),
+                    ]
                     new_supercell['bbox'] = bbox
                     aligned_supercells.append(new_supercell)
 

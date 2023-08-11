@@ -129,8 +129,8 @@ def main():
     split = args.split
     padding = args.table_padding
 
-    data_output_directory = data_directory + "_PADDING_" + str(padding)
-    words_output_directory = words_directory + "_PADDING_" + str(padding)
+    data_output_directory = f"{data_directory}_PADDING_{str(padding)}"
+    words_output_directory = f"{words_directory}_PADDING_{str(padding)}"
 
     if not os.path.exists(data_output_directory):
         os.makedirs(data_output_directory)
@@ -163,7 +163,7 @@ def main():
 
         img = Image.open(image_filepath)
 
-        if not len(tables) == 1:
+        if len(tables) != 1:
             print('Problem')
 
         table_bbox = bboxes[tables[0]]

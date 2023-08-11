@@ -70,13 +70,13 @@ def crop_around_bbox_coco(image, crop_bbox, max_margin, target):
             cropped_bboxes.append(bbox)
             cropped_labels.append(label)
 
-    if len(cropped_bboxes) > 0:
+    if cropped_bboxes:
         target["boxes"] = torch.as_tensor(cropped_bboxes, dtype=torch.float32)
         target["labels"] = torch.as_tensor(cropped_labels, dtype=torch.int64)
         w, h = img.size
         target["size"] = torch.tensor([w, h])
         return cropped_image, target
-                 
+
     return image, target
 
 
@@ -160,8 +160,8 @@ class RandomCrop(object):
                 if bbox[0] < bbox[2] and bbox[1] < bbox[3]:
                     cropped_bboxes.append(bbox)
                     cropped_labels.append(label)
-                         
-            if len(cropped_bboxes) > 0:
+
+            if cropped_bboxes:
                 target["boxes"] = torch.as_tensor(cropped_bboxes, dtype=torch.float32)
                 target["labels"] = torch.as_tensor(cropped_labels, dtype=torch.int64)
                 return cropped_image, target
@@ -202,8 +202,8 @@ class RandomResize(object):
                 if bbox[0] < bbox[2] - 1 and bbox[1] < bbox[3] - 1:
                     resized_bboxes.append(bbox)
                     resized_labels.append(label)
-                         
-            if len(resized_bboxes) > 0:
+
+            if resized_bboxes:
                 target["boxes"] = torch.as_tensor(resized_bboxes, dtype=torch.float32)
                 target["labels"] = torch.as_tensor(resized_labels, dtype=torch.int64)
                 return resized_image, target
@@ -246,8 +246,11 @@ class TightAnnotationCrop(object):
 
     def __call__(self, img: PIL.Image.Image, target: dict):
         w, h = target['size']
-        bboxes = [bbox for label, bbox in zip(target['labels'], target['boxes']) if label.item() in self.labels]
-        if len(bboxes) > 0:                    
+        if bboxes := [
+            bbox
+            for label, bbox in zip(target['labels'], target['boxes'])
+            if label.item() in self.labels
+        ]:
             object_num = random.randint(0, len(bboxes)-1)
             left = random.randint(0, self.left_max_pad)
             top = random.randint(0, self.top_max_pad)
@@ -290,8 +293,8 @@ class RandomCrop(object):
                 if bbox[0] < bbox[2] and bbox[1] < bbox[3]:
                     cropped_bboxes.append(bbox)
                     cropped_labels.append(label)
-                         
-            if len(cropped_bboxes) > 0:
+
+            if cropped_bboxes:
                 target["boxes"] = torch.as_tensor(cropped_bboxes, dtype=torch.float32)
                 target["labels"] = torch.as_tensor(cropped_labels, dtype=torch.int64)
                 return cropped_image, target
@@ -324,8 +327,8 @@ class RandomPercentageCrop(object):
                 if bbox[0] < bbox[2] and bbox[1] < bbox[3]:
                     cropped_bboxes.append(bbox)
                     cropped_labels.append(label)
-                         
-            if len(cropped_bboxes) > 0:
+
+            if cropped_bboxes:
                 target["boxes"] = torch.as_tensor(cropped_bboxes, dtype=torch.float32)
                 target["labels"] = torch.as_tensor(cropped_labels, dtype=torch.int64)
                 return cropped_image, target
@@ -521,42 +524,55 @@ class PDFTablesDataset(torch.utils.data.Dataset):
                 lines = [l.split('/')[-1] for l in lines]
         except:
             lines = os.listdir(root)
-        xml_page_ids = set([f.strip().replace(".xml", "") for f in lines if f.strip().endswith(".xml")])
-            
+        xml_page_ids = {
+            f.strip().replace(".xml", "")
+            for f in lines
+            if f.strip().endswith(".xml")
+        }
+
         image_directory = os.path.join(root, "..", "images")
         try:
             with open(os.path.join(image_directory, "filelist.txt"), 'r') as file:
                 lines = file.readlines()
         except:
             lines = os.listdir(image_directory)
-        png_page_ids = set([f.strip().replace(self.image_extension, "") for f in lines if f.strip().endswith(self.image_extension)])
-        
+        png_page_ids = {
+            f.strip().replace(self.image_extension, "")
+            for f in lines
+            if f.strip().endswith(self.image_extension)
+        }
+
         self.page_ids = sorted(xml_page_ids.intersection(png_page_ids))
-        if not max_size is None:
+        if max_size is not None:
             random.shuffle(self.page_ids)
             self.page_ids = self.page_ids[:max_size]
         num_page_ids = len(self.page_ids)
-        self.types = [1 for idx in range(num_page_ids)]
-            
-        if not max_neg is None and max_neg > 0:
+        self.types = [1 for _ in range(num_page_ids)]
+
+        if max_neg is not None and max_neg > 0:
             with open(os.path.join(negatives_root, "filelist.txt"), 'r') as file:
-                neg_xml_page_ids = set([f.strip().replace(".xml", "") for f in file.readlines() if f.strip().endswith(".xml")])
+                neg_xml_page_ids = {
+                    f.strip().replace(".xml", "")
+                    for f in file.readlines()
+                    if f.strip().endswith(".xml")
+                }
                 neg_xml_page_ids = neg_xml_page_ids.intersection(png_page_ids)
                 neg_xml_page_ids = sorted(neg_xml_page_ids.difference(set(self.page_ids)))
                 if len(neg_xml_page_ids) > max_neg:
                     neg_xml_page_ids = neg_xml_page_ids[:max_neg]
             self.page_ids += neg_xml_page_ids
-            self.types += [0 for idx in range(len(neg_xml_page_ids))]
-        
+            self.types += [0 for _ in range(len(neg_xml_page_ids))]
+
         self.has_mask = False
-        
+
         if self.make_coco:
-            self.dataset = {}
-            self.dataset['images'] = [{'id': idx} for idx, _ in enumerate(self.page_ids)]
-            self.dataset['annotations'] = []
+            self.dataset = {
+                'images': [{'id': idx} for idx, _ in enumerate(self.page_ids)],
+                'annotations': [],
+            }
             ann_id = 0
             for image_id, page_id in enumerate(self.page_ids):
-                annot_path = os.path.join(self.root, page_id + ".xml")
+                annot_path = os.path.join(self.root, f"{page_id}.xml")
                 bboxes, labels = read_pascal_voc(annot_path, class_map=self.class_map)
 
                 # Reduce class set
@@ -614,12 +630,12 @@ class PDFTablesDataset(torch.utils.data.Dataset):
         # load images ad masks
         page_id = self.page_ids[idx]
         img_path = os.path.join(self.root, "..", "images", page_id + self.image_extension)
-        annot_path = os.path.join(self.root, page_id + ".xml")
-        
+        annot_path = os.path.join(self.root, f"{page_id}.xml")
+
         img = Image.open(img_path).convert("RGB")
         w, h = img.size
-        
-        if self.types[idx] == 1:        
+
+        if self.types[idx] == 1:    
             bboxes, labels = read_pascal_voc(annot_path, class_map=self.class_map)
 
             # Reduce class set
@@ -628,7 +644,7 @@ class PDFTablesDataset(torch.utils.data.Dataset):
             labels = [labels[idx] for idx in keep_indices]
 
             # Convert to Torch Tensor
-            if len(labels) > 0:
+            if labels:
                 bboxes = torch.as_tensor(bboxes, dtype=torch.float32)
                 labels = torch.as_tensor(labels, dtype=torch.int64)
             else:
@@ -642,10 +658,11 @@ class PDFTablesDataset(torch.utils.data.Dataset):
         num_objs = bboxes.shape[0]
 
         # Create target
-        target = {}
-        target["boxes"] = bboxes
-        target["labels"] = labels
-        target["image_id"] = torch.as_tensor([idx])
+        target = {
+            "boxes": bboxes,
+            "labels": labels,
+            "image_id": torch.as_tensor([idx]),
+        }
         target["area"] = bboxes[:, 2] * bboxes[:, 3] # COCO area
         target["iscrowd"] = torch.zeros((num_objs,), dtype=torch.int64)
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
@@ -656,7 +673,7 @@ class PDFTablesDataset(torch.utils.data.Dataset):
 
         if self.transforms is not None:
             img_tensor, target = self.transforms(img, target)
-        
+
         #if self.include_original:
         #    return img_tensor, target, img, img_path
 
@@ -697,7 +714,7 @@ class PDFTablesDataset(torch.utils.data.Dataset):
         if len(imgIds) == len(catIds) == len(areaRng) == 0:
             anns = self.dataset['annotations']
         else:
-            if not len(imgIds) == 0:
+            if len(imgIds) != 0:
                 lists = [self.imgToAnns[imgId] for imgId in imgIds if imgId in self.imgToAnns]
                 anns = list(itertools.chain.from_iterable(lists))
             else:

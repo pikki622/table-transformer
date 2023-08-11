@@ -56,12 +56,12 @@ def objects_to_cells(bboxes, labels, scores, page_tokens, structure_class_names,
                                             structure_class_names,
                                             structure_class_thresholds)
 
-    table_objects = []
-    for bbox, score, label in zip(bboxes, scores, labels):
-        table_objects.append({'bbox': bbox, 'score': score, 'label': label})
-        
+    table_objects = [
+        {'bbox': bbox, 'score': score, 'label': label}
+        for bbox, score, label in zip(bboxes, scores, labels)
+    ]
     table = {'objects': table_objects, 'page_num': 0} 
-    
+
     table_class_objects = [obj for obj in table_objects if obj['label'] == structure_class_map['table']]
     if len(table_class_objects) > 1:
         table_class_objects = sorted(table_class_objects, key=lambda x: x['score'], reverse=True)
@@ -69,20 +69,20 @@ def objects_to_cells(bboxes, labels, scores, page_tokens, structure_class_names,
         table_bbox = list(table_class_objects[0]['bbox'])
     except:
         table_bbox = (0,0,1000,1000)
-    
+
     tokens_in_table = [token for token in page_tokens if postprocess.iob(token['bbox'], table_bbox) >= 0.5]
-    
+
     # Determine the table cell structure from the objects
     table_structures, cells, confidence_score = postprocess.objects_to_cells(table, table_objects, tokens_in_table,
                                                                     structure_class_names,
                                                                     structure_class_thresholds)
-    
+
     return table_structures, cells, confidence_score
 
 
 def cells_to_adjacency_pair_list(cells, key='cell_text'):
     # Index the cells by their grid coordinates
-    cell_nums_by_coordinates = dict()
+    cell_nums_by_coordinates = {}
     for cell_num, cell in enumerate(cells):
         for row_num in cell['row_nums']:
             for column_num in cell['column_nums']:
@@ -122,7 +122,7 @@ def cells_to_adjacency_pair_list(cells, key='cell_text'):
             for current_row in range(max_row+1, num_rows):
                 cell2_num = cell_nums_by_coordinates[(current_row, column_num)]
                 cell2 = cells[cell2_num]
-                if not cell2['cell_text'] == '':
+                if cell2['cell_text'] != '':
                     adj_bbox = [(max(cell1['bbox'][0], cell2['bbox'][0])+min(cell1['bbox'][2], cell2['bbox'][2]))/2-3,
                                 cell1['bbox'][3],
                                 (max(cell1['bbox'][0], cell2['bbox'][0])+min(cell1['bbox'][2], cell2['bbox'][2]))/2+3,
@@ -138,7 +138,7 @@ def cells_to_adjacency_pair_list(cells, key='cell_text'):
             for current_column in range(max_column+1, num_columns):
                 cell2_num = cell_nums_by_coordinates[(row_num, current_column)]
                 cell2 = cells[cell2_num]
-                if not cell2['cell_text'] == '':
+                if cell2['cell_text'] != '':
                     adj_bbox = [cell1['bbox'][2],
                                 (max(cell1['bbox'][1], cell2['bbox'][1])+min(cell1['bbox'][3], cell2['bbox'][3]))/2-3,
                                 cell2['bbox'][0],
@@ -157,7 +157,7 @@ def cells_to_adjacency_pair_list(cells, key='cell_text'):
 
 def cells_to_adjacency_pair_list_with_blanks(cells, key='cell_text'):
     # Index the cells by their grid coordinates
-    cell_nums_by_coordinates = dict()
+    cell_nums_by_coordinates = {}
     for cell_num, cell in enumerate(cells):
         for row_num in cell['row_nums']:
             for column_num in cell['column_nums']:
@@ -229,10 +229,10 @@ def dar_con(true_adjacencies, pred_adjacencies):
     """
 
     true_c = Counter()
-    true_c.update([elem for elem in true_adjacencies])
+    true_c |= list(true_adjacencies)
 
     pred_c = Counter()
-    pred_c.update([elem for elem in pred_adjacencies])
+    pred_c |= list(pred_adjacencies)
 
     num_true_positives = (sum(true_c.values()) - sum((true_c - pred_c).values()))
 
@@ -332,12 +332,18 @@ def compute_metrics(mode, true_bboxes, true_labels, true_scores, true_cells,
 
 
 def compute_statistics(structures, cells):
-    statistics = {}
-    statistics['num_rows'] = len(structures['rows'])
-    statistics['num_columns'] = len(structures['columns'])
-    statistics['num_cells'] = len(cells)
-    statistics['num_spanning_cells'] = len([cell for cell in cells if len(cell['row_nums']) > 1
-                                            or len(cell['column_nums']) > 1])
+    statistics = {
+        'num_rows': len(structures['rows']),
+        'num_columns': len(structures['columns']),
+        'num_cells': len(cells),
+        'num_spanning_cells': len(
+            [
+                cell
+                for cell in cells
+                if len(cell['row_nums']) > 1 or len(cell['column_nums']) > 1
+            ]
+        ),
+    }
     header_rows = set()
     for cell in cells:
         if cell['header']:
@@ -373,10 +379,11 @@ def rescale_bboxes(out_bbox, size):
 
 def get_bbox_decorations(data_type, label):
     if label == 0:
-        if data_type == 'detection':
-            return 'brown', 0.05, 3, '//'
-        else:
-            return 'brown', 0, 3, None 
+        return (
+            ('brown', 0.05, 3, '//')
+            if data_type == 'detection'
+            else ('brown', 0, 3, None)
+        )
     elif label == 1:
         return 'red', 0.15, 2, None
     elif label == 2:
@@ -387,7 +394,7 @@ def get_bbox_decorations(data_type, label):
         return 'cyan', 0.2, 4, '//'
     elif label == 5:
         return 'green', 0.2, 4, '\\\\'
-    
+
     return 'gray', 0, 0, None
 
 
@@ -397,21 +404,19 @@ def compute_metrics_summary(sample_metrics, mode):
     averaged over all samples.
     """
 
-    metrics_summary = {}
-
     metric_names = ['acc_con', 'grits_top', 'grits_con', 'grits_loc']
     if mode == 'grits-all':
         metric_names += ['grits_rawloc', 'dar_con_original', 'dar_con']
 
     simple_samples = [entry for entry in sample_metrics if entry['num_spanning_cells'] == 0]
-    metrics_summary['simple'] = {'num_tables': len(simple_samples)}
-    if len(simple_samples) > 0:
+    metrics_summary = {'simple': {'num_tables': len(simple_samples)}}
+    if simple_samples:
         for metric_name in metric_names:
             metrics_summary['simple'][metric_name] = np.mean([elem[metric_name] for elem in simple_samples])
 
     complex_samples = [entry for entry in sample_metrics if entry['num_spanning_cells'] > 0]
     metrics_summary['complex'] = {'num_tables': len(complex_samples)}
-    if len(complex_samples) > 0:
+    if complex_samples:
         for metric_name in metric_names:
             metrics_summary['complex'][metric_name] = np.mean([elem[metric_name] for elem in complex_samples])
 
@@ -429,7 +434,7 @@ def print_metrics_line(name, metrics_dict, key, min_length=18):
     try:
         print("{}: {:.4f}".format(name, metrics_dict[key]))
     except:
-        print("{}: --".format(name))
+        print(f"{name}: --")
 
 
 def print_metrics_summary(metrics_summary, all=False):
@@ -441,7 +446,7 @@ def print_metrics_summary(metrics_summary, all=False):
     print('-' * 100)
     for table_type in ['simple', 'complex', 'all']:
         metrics = metrics_summary[table_type]
-        print("Results on {} tables ({} total):".format(table_type, metrics['num_tables']))
+        print(f"Results on {table_type} tables ({metrics['num_tables']} total):")
         print_metrics_line("Accuracy_Con", metrics, 'acc_con')
         print_metrics_line("GriTS_Top", metrics, 'grits_top')
         print_metrics_line("GriTS_Con", metrics, 'grits_con')
@@ -505,9 +510,13 @@ def visualize(args, target, pred_logits, pred_bboxes):
     ax.imshow(img, interpolation='lanczos')
 
     for bbox, label, score in zip(pred_bboxes, pred_labels, pred_scores):
-        if ((args.data_type == 'structure' and not label > 5)
-            or (args.data_type == 'detection' and not label > 1)
-            and score > 0.5):
+        if (
+            args.data_type == 'structure'
+            and label <= 5
+            or args.data_type == 'detection'
+            and label <= 1
+            and score > 0.5
+        ):
             color, alpha, linewidth, hatch = get_bbox_decorations(args.data_type,
                                                                   label)
             # Fill
@@ -550,10 +559,7 @@ def visualize(args, target, pred_logits, pred_bboxes):
 
         for cell in pred_cells:
             bbox = cell['bbox']
-            if cell['header']:
-                alpha = 0.3
-            else:
-                alpha = 0.125
+            alpha = 0.3 if cell['header'] else 0.125
             rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=1, 
                                     edgecolor='none',facecolor="magenta", alpha=alpha)
             ax.add_patch(rect)
@@ -590,17 +596,14 @@ def evaluate(args, model, criterion, postprocessors, data_loader, base_ds, devic
         pred_logits_collection = []
         pred_bboxes_collection = []
         targets_collection = []
-        
+
     num_batches = len(data_loader)
     print_every = max(args.eval_step, int(math.ceil(num_batches / 100)))
-    batch_num = 0
-
-    for samples, targets in metric_logger.log_every(data_loader, print_every, header):
-        batch_num += 1
+    for batch_num, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_every, header), start=1):
         samples = samples.to(device)
         for t in targets:
             for k, v in t.items():
-                if not k == 'img_path':
+                if k != 'img_path':
                     t[k] = v.to(device)
 
         outputs = model(samples)
@@ -635,7 +638,7 @@ def evaluate(args, model, criterion, postprocessors, data_loader, base_ds, devic
 
             for target in targets:
                 for k, v in target.items():
-                    if not k == 'img_path':
+                    if k != 'img_path':
                         target[k] = v.cpu()
                 img_filepath = target["img_path"]
                 img_filename = img_filepath.split("/")[-1]
@@ -680,7 +683,9 @@ def evaluate(args, model, criterion, postprocessors, data_loader, base_ds, devic
         # Print summary of metrics
         print_metrics_summary(metrics_summary)
 
-    print("Total time taken for {} samples: {}".format(len(base_ds), datetime.now() - st_time))
+    print(
+        f"Total time taken for {len(base_ds)} samples: {datetime.now() - st_time}"
+    )
 
     return stats, coco_evaluator
 

@@ -19,15 +19,8 @@ def compute_fscore(num_true_positives, num_true, num_positives):
     - recall is 1 when there are no true instances
     - fscore is 0 when recall or precision is 0
     """
-    if num_positives > 0:
-        precision = num_true_positives / num_positives
-    else:
-        precision = 1
-    if num_true > 0:
-        recall = num_true_positives / num_true
-    else:
-        recall = 1
-        
+    precision = num_true_positives / num_positives if num_positives > 0 else 1
+    recall = num_true_positives / num_true if num_true > 0 else 1
     if precision + recall > 0:
         fscore = 2 * precision * recall / (precision + recall)
     else:
@@ -66,7 +59,7 @@ def traceback(pointers):
     seq2_idx = pointers.shape[1] - 1
     aligned_sequence1_indices = []
     aligned_sequence2_indices = []
-    while not (seq1_idx == 0 and seq2_idx == 0):
+    while seq1_idx != 0 or seq2_idx != 0:
         if pointers[seq1_idx, seq2_idx] == -1:
             seq1_idx -= 1
         elif pointers[seq1_idx, seq2_idx] == 1:
@@ -76,7 +69,7 @@ def traceback(pointers):
             seq2_idx -= 1
             aligned_sequence1_indices.append(seq1_idx)
             aligned_sequence2_indices.append(seq2_idx)
-            
+
     aligned_sequence1_indices = aligned_sequence1_indices[::-1]
     aligned_sequence2_indices = aligned_sequence2_indices[::-1]
 
@@ -97,31 +90,30 @@ def align_1d(sequence1, sequence2, reward_lookup, return_alignment=False):
 
     scores, pointers = initialize_DP(sequence1_length,
                                      sequence2_length)
-        
-    for seq1_idx in range(1, sequence1_length+1):
-        for seq2_idx in range(1, sequence2_length+1):
-            reward = reward_lookup[sequence1[seq1_idx-1] + sequence2[seq2_idx-1]]
-            diag_score = scores[seq1_idx-1, seq2_idx-1] + reward
-            skip_seq2_score = scores[seq1_idx, seq2_idx-1]
-            skip_seq1_score = scores[seq1_idx-1, seq2_idx]
-               
-            max_score = max(diag_score, skip_seq1_score, skip_seq2_score)
-            scores[seq1_idx, seq2_idx] = max_score
-            if diag_score == max_score:
-                pointers[seq1_idx, seq2_idx] = 0
-            elif skip_seq1_score == max_score:
-                pointers[seq1_idx, seq2_idx] = -1
-            else: # skip_seq2_score == max_score
-                pointers[seq1_idx, seq2_idx] = 1
-    
+
+    for seq1_idx, seq2_idx in itertools.product(range(1, sequence1_length+1), range(1, sequence2_length+1)):
+        reward = reward_lookup[sequence1[seq1_idx-1] + sequence2[seq2_idx-1]]
+        diag_score = scores[seq1_idx-1, seq2_idx-1] + reward
+        skip_seq2_score = scores[seq1_idx, seq2_idx-1]
+        skip_seq1_score = scores[seq1_idx-1, seq2_idx]
+
+        max_score = max(diag_score, skip_seq1_score, skip_seq2_score)
+        scores[seq1_idx, seq2_idx] = max_score
+        if diag_score == max_score:
+            pointers[seq1_idx, seq2_idx] = 0
+        elif skip_seq1_score == max_score:
+            pointers[seq1_idx, seq2_idx] = -1
+        else: # skip_seq2_score == max_score
+            pointers[seq1_idx, seq2_idx] = 1
+
     score = scores[-1, -1]
-    
+
     if not return_alignment:
         return score
-    
+
     # Traceback
     sequence1_indices, sequence2_indices = traceback(pointers)
-    
+
     return sequence1_indices, sequence2_indices, score
 
 
@@ -228,12 +220,9 @@ def iou(bbox1, bbox2):
     """
     intersection = Rect(bbox1).intersect(bbox2)
     union = Rect(bbox1).include_rect(bbox2)
-    
+
     union_area = union.get_area()
-    if union_area > 0:
-        return intersection.get_area() / union.get_area()
-    
-    return 0
+    return intersection.get_area() / union.get_area() if union_area > 0 else 0
 
 
 def cells_to_grid(cells, key='bbox'):
@@ -247,14 +236,14 @@ def cells_to_grid(cells, key='bbox'):
     """
     if len(cells) == 0:
         return [[]]
-    num_rows = max([max(cell['row_nums']) for cell in cells])+1
-    num_columns = max([max(cell['column_nums']) for cell in cells])+1
+    num_rows = max(max(cell['row_nums']) for cell in cells) + 1
+    num_columns = max(max(cell['column_nums']) for cell in cells) + 1
     cell_grid = np.zeros((num_rows, num_columns)).tolist()
     for cell in cells:
         for row_num in cell['row_nums']:
             for column_num in cell['column_nums']:
                 cell_grid[row_num][column_num] = cell[key]
-                
+
     return cell_grid
 
 
@@ -265,8 +254,8 @@ def cells_to_relspan_grid(cells):
     """
     if len(cells) == 0:
         return [[]]
-    num_rows = max([max(cell['row_nums']) for cell in cells])+1
-    num_columns = max([max(cell['column_nums']) for cell in cells])+1
+    num_rows = max(max(cell['row_nums']) for cell in cells) + 1
+    num_columns = max(max(cell['column_nums']) for cell in cells) + 1
     cell_grid = np.zeros((num_rows, num_columns)).tolist()
     for cell in cells:
         min_row_num = min(cell['row_nums'])
@@ -281,7 +270,7 @@ def cells_to_relspan_grid(cells):
                     max_column_num - column_num,
                     max_row_num - row_num, 
                 ]
-                
+
     return cell_grid 
 
 
@@ -313,11 +302,10 @@ def get_spanning_cell_rows_and_columns(spanning_cells, rows, columns):
                 column_matches.add(column_num)
         already_taken = False
         this_matches = []
-        for row_num in row_matches:
-            for column_num in column_matches:
-                this_matches.append((row_num, column_num))
-                if (row_num, column_num) in all_matches:
-                    already_taken = True
+        for row_num, column_num in itertools.product(row_matches, column_matches):
+            this_matches.append((row_num, column_num))
+            if (row_num, column_num) in all_matches:
+                already_taken = True
         if not already_taken:
             for match in this_matches:
                 all_matches.add(match)
@@ -356,9 +344,9 @@ def output_to_dilatedbbox_grid(bboxes, labels, scores):
     columns.sort(key=lambda x: x['bbox'][0]+x['bbox'][2])
     spanning_cells.sort(key=lambda x: -x['score'])
     cell_grid = []
-    for row_num, row in enumerate(rows):
+    for row in rows:
         column_grid = []
-        for column_num, column in enumerate(columns):
+        for column in columns:
             bbox = Rect(row['bbox']).intersect(column['bbox'])
             column_grid.append(list(bbox))
         cell_grid.append(column_grid)
@@ -366,7 +354,7 @@ def output_to_dilatedbbox_grid(bboxes, labels, scores):
     for matches, spanning_cell in zip(matches_by_spanning_cell, spanning_cells):
         for match in matches:
             cell_grid[match[0]][match[1]] = spanning_cell['bbox']
-    
+
     return cell_grid
 
 
@@ -415,30 +403,23 @@ def html_to_cells(table_html):
     except Exception as e:
         print(e)
         return None
-    
+
     table_cells = []
-    
+
     occupied_columns_by_row = defaultdict(set)
     current_row = -1
 
     # Get all td tags
-    stack = []
-    stack.append((tree, False))
-    while len(stack) > 0:
+    stack = [(tree, False)]
+    while stack:
         current, in_header = stack.pop()
 
         if current.tag == 'tr':
             current_row += 1
-            
-        if current.tag == 'td' or current.tag =='th':
-            if "colspan" in current.attrib:
-                colspan = int(current.attrib["colspan"])
-            else:
-                colspan = 1
-            if "rowspan" in current.attrib:
-                rowspan = int(current.attrib["rowspan"])
-            else:
-                rowspan = 1
+
+        if current.tag in ['td', 'th']:
+            colspan = int(current.attrib["colspan"]) if "colspan" in current.attrib else 1
+            rowspan = int(current.attrib["rowspan"]) if "rowspan" in current.attrib else 1
             row_nums = list(range(current_row, current_row + rowspan))
             try:
                 max_occupied_column = max(occupied_columns_by_row[current_row])
@@ -448,18 +429,20 @@ def html_to_cells(table_html):
             column_nums = list(range(current_column, current_column + colspan))
             for row_num in row_nums:
                 occupied_columns_by_row[row_num].update(column_nums)
-                
-            cell_dict = dict()
-            cell_dict['row_nums'] = row_nums
-            cell_dict['column_nums'] = column_nums
-            cell_dict['is_column_header'] = current.tag == 'th' or in_header
-            cell_dict['cell_text'] = ' '.join(current.itertext())
+
+            cell_dict = {
+                'row_nums': row_nums,
+                'column_nums': column_nums,
+                'is_column_header': current.tag == 'th' or in_header,
+                'cell_text': ' '.join(current.itertext()),
+            }
             table_cells.append(cell_dict)
 
         children = list(current)
-        for child in children[::-1]:
-            stack.append((child, in_header or current.tag == 'th' or current.tag == 'thead'))
-    
+        stack.extend(
+            (child, in_header or current.tag == 'th' or current.tag == 'thead')
+            for child in children[::-1]
+        )
     return table_cells
 
 

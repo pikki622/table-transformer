@@ -63,7 +63,10 @@ def adjust_bbox_coordinates(table_dict, doc):
     mat = doc[table_dict['pdf_page_index']].transformation_matrix
 
     for cell in table_dict['cells']:
-        if not 'pdf_text_tight_bbox' in cell or len(cell['pdf_text_tight_bbox']) == 0:
+        if (
+            'pdf_text_tight_bbox' not in cell
+            or len(cell['pdf_text_tight_bbox']) == 0
+        ):
             continue
         bbox = list(Rect(cell['pdf_text_tight_bbox']))
         bbox = [bbox[0] + mediabox[0],
@@ -74,23 +77,21 @@ def adjust_bbox_coordinates(table_dict, doc):
 
 def create_document_page_image(doc, page_num, zoom=None, output_image_max_dim=1000):
     page = doc[page_num]
-    
+
     if zoom is None:
         zoom = output_image_max_dim / max(page.rect)
-        
+
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix = mat, alpha = False)
-    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-    
-    return img
+    return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
 def create_table_dict(doc, region, partial_table=False):
-    table_dict = {}
-    table_dict['reject'] = []
-    table_dict['fix'] = []
-    table_dict['partial_table'] = partial_table
-    table_dict['cells'] = []
-
+    table_dict = {
+        'reject': [],
+        'fix': [],
+        'partial_table': partial_table,
+        'cells': [],
+    }
     page_num = int(region.get("page")) - 1
     page = doc[page_num]
 
@@ -98,15 +99,15 @@ def create_table_dict(doc, region, partial_table=False):
     max_column = -1
     cell_presence_by_grid_location = defaultdict(bool)
     for cell in region.iter('cell'):
-        table_cell = {}
         bbox = cell.find('bounding-box')
         bbox = [int(bbox.get('x1')),
                 page.mediabox[3] - int(bbox.get('y2')) + 1,
                 int(bbox.get('x2')),
                 page.mediabox[3] - int(bbox.get('y1')) + 1]
-        table_cell['pdf_text_tight_bbox'] = bbox
-        table_cell['text_content'] = cell.find('content').text
-
+        table_cell = {
+            'pdf_text_tight_bbox': bbox,
+            'text_content': cell.find('content').text,
+        }
         start_row = int(cell.get('start-row'))
         start_column = int(cell.get('start-col'))
 
@@ -130,8 +131,8 @@ def create_table_dict(doc, region, partial_table=False):
         table_dict['cells'].append(table_cell)
 
         if len(table_cell['column_nums']) == 0 or len(table_cell['row_nums']) == 0:
-            print("Empty or negative grid locations: {}".format(table_cell))
-            #raise Exception("Empty or negative grid locations: {}".format(table_cell))
+            print(f"Empty or negative grid locations: {table_cell}")
+                    #raise Exception("Empty or negative grid locations: {}".format(table_cell))
 
         max_row = max(max_row, table_cell['row_nums'][-1])
         max_column = max(max_column, table_cell['column_nums'][-1])
@@ -140,7 +141,9 @@ def create_table_dict(doc, region, partial_table=False):
             for column_num in table_cell['column_nums']:
                 if cell_presence_by_grid_location[(row_num, column_num)]:
                     overlap = True
-                    print("Bad table, some cells intersect/overlap within the grid: ({}, {})".format(row_num, column_num))
+                    print(
+                        f"Bad table, some cells intersect/overlap within the grid: ({row_num}, {column_num})"
+                    )
                 cell_presence_by_grid_location[(row_num, column_num)] = True
         if overlap:
             table_dict['reject'].append('HTML grid cells overlap')
@@ -148,29 +151,29 @@ def create_table_dict(doc, region, partial_table=False):
     # Create missing cells
     for row_num in range(max_row + 1):
         for column_num in range(max_column + 1):
-            if not (row_num, column_num) in cell_presence_by_grid_location:
-                table_cell = {}
-                table_cell['pdf_text_tight_bbox'] = []
-                table_cell['text_content'] = ''
-                table_cell['row_nums'] = list(range(row_num, row_num + 1))
-                table_cell['column_nums'] = list(range(column_num, column_num + 1))
-                table_cell['is_column_header'] = False
-                
+            if (row_num, column_num) not in cell_presence_by_grid_location:
+                table_cell = {
+                    'pdf_text_tight_bbox': [],
+                    'text_content': '',
+                    'row_nums': list(range(row_num, row_num + 1)),
+                    'column_nums': list(range(column_num, column_num + 1)),
+                    'is_column_header': False,
+                }
                 table_dict['cells'].append(table_cell)
 
-    num_rows = max([max(cell['row_nums']) for cell in table_dict['cells']]) + 1
-    num_columns = max([max(cell['column_nums']) for cell in table_dict['cells']]) + 1
+    num_rows = max(max(cell['row_nums']) for cell in table_dict['cells']) + 1
+    num_columns = max(max(cell['column_nums']) for cell in table_dict['cells']) + 1
     expected_num_cells = num_rows * num_columns
     #actual_num_cells = len(grid_cell_locations)
-        
+
     # Make sure all grid locations are present
     # Could be bad data or bad parsing algorithm
     #if not expected_num_cells == actual_num_cells:
     #    table_dict['reject'].append("HTML missing grid cells")
-        
+
     table_dict['rows'] = {row_num: {'is_column_header': False} for row_num in range(num_rows)}
     table_dict['columns'] = {column_num: {} for column_num in range(num_columns)}
-                
+
     table_dict['pdf_page_index'] = page_num
     return table_dict
 
@@ -186,10 +189,10 @@ def read_xml(xml_file, doc):
         page_nums = [int(region.get("page"))-1 for region in table_tree.iter('region')]
         for region_num, region in enumerate(table_tree.iter('region')):
             region_id = region.attrib['id']
-            if region_num > 0 and not page_nums[region_num] == page_nums[region_num-1]:
-                partial_table = True
-            else:
-                partial_table = False
+            partial_table = (
+                region_num > 0
+                and page_nums[region_num] != page_nums[region_num - 1]
+            )
             table_dict = create_table_dict(doc, region, partial_table=partial_table)
             table_dict['icdar2013_source_table_id'] = table_id
             table_dict['icdar2013_source_region_id'] = region_id
@@ -204,31 +207,34 @@ def complete_table_grid(table_dict):
 
     # Determine bounding box for rows and columns
     for cell in table_dict['cells']:
-        if not 'pdf_text_tight_bbox' in cell or len(cell['pdf_text_tight_bbox']) == 0:
+        if (
+            'pdf_text_tight_bbox' not in cell
+            or len(cell['pdf_text_tight_bbox']) == 0
+        ):
             continue
 
         bbox = cell['pdf_text_tight_bbox'] 
 
         table_rect.include_rect(list(bbox))
-        
+
         min_row = min(cell['row_nums'])
         if rects_by_row[min_row][1] is None:
             rects_by_row[min_row][1] = bbox[1]
         else:
             rects_by_row[min_row][1] = min(rects_by_row[min_row][1], bbox[1])
-            
+
         max_row = max(cell['row_nums'])
         if rects_by_row[max_row][3] is None:
             rects_by_row[max_row][3] = bbox[3]
         else:
             rects_by_row[max_row][3] = max(rects_by_row[max_row][3], bbox[3])
-            
+
         min_column = min(cell['column_nums'])
         if rects_by_column[min_column][0] is None:
             rects_by_column[min_column][0] = bbox[0]
         else:
             rects_by_column[min_column][0] = min(rects_by_column[min_column][0], bbox[0])
-            
+
         max_column = max(cell['column_nums'])
         if rects_by_column[max_column][2] is None:
             rects_by_column[max_column][2] = bbox[2]
@@ -238,21 +244,21 @@ def complete_table_grid(table_dict):
     table_bbox = list(table_rect)
     table_dict['pdf_table_bbox'] = table_bbox
 
-    for row_num, row_rect in rects_by_row.items():
+    for row_rect in rects_by_row.values():
         row_rect[0] = table_bbox[0]
         row_rect[2] = table_bbox[2]
 
-    for col_num, col_rect in rects_by_column.items():
+    for col_rect in rects_by_column.values():
         col_rect[1] = table_bbox[1]
         col_rect[3] = table_bbox[3]
-        
+
     for k, row in table_dict['rows'].items():
         v = rects_by_row[k]
         table_dict['rows'][k]['pdf_row_bbox'] = list(v)
     for k, column in table_dict['columns'].items():
         v = rects_by_column[k]
         table_dict['columns'][k]['pdf_column_bbox'] = list(v)
-        
+
     for k, row in table_dict['rows'].items():    
         for elem in row['pdf_row_bbox']:
             if elem is None:
@@ -261,7 +267,7 @@ def complete_table_grid(table_dict):
         for elem in column['pdf_column_bbox']:
             if elem is None:
                 table_dict['reject'].append("undetermined column boundary")
-                
+
     # Adjust bounding boxes if minor overlap
     fixed_overlap = False
     num_rows = len(table_dict['rows'])
@@ -270,7 +276,7 @@ def complete_table_grid(table_dict):
         row2_bbox = table_dict['rows'][row_num+1]['pdf_row_bbox']
         overlap1 = overlap(row1_bbox, row2_bbox)
         overlap2 = overlap(row2_bbox, row1_bbox)
-        
+
         if overlap1 > 0 and overlap2 > 0:
             if overlap1 < 0.22 and overlap2 < 0.22:
                 fixed_overlap = True
@@ -279,8 +285,10 @@ def complete_table_grid(table_dict):
                 table_dict['rows'][row_num+1]['pdf_row_bbox'][1] = midpoint
                 fixed_overlap = True
             else:
-                table_dict['reject'].append("rows intersect: {} {} ({}), {} {} ({})".format(row_num, row1_bbox, overlap1, row_num+1, row2_bbox, overlap2))
-        
+                table_dict['reject'].append(
+                    f"rows intersect: {row_num} {row1_bbox} ({overlap1}), {row_num + 1} {row2_bbox} ({overlap2})"
+                )
+
     # Intersect each row and column to determine grid cell bounding boxes
     #page_words = page.get_text_words()
     for cell in table_dict['cells']:
@@ -313,24 +321,26 @@ def identify_projected_row_headers(table_dict):
         for row_num in cell['row_nums']:
             all_cells_in_row_only_in_one_row_by_row[row_num] = all_cells_in_row_only_in_one_row_by_row[row_num] and one_row_only
 
-    projected_row_header_rows = set()
-    for row_num, row in table_dict['rows'].items():
-        if (not row['is_column_header'] and cells_with_text_count_by_row[row_num] == 1
-                and all_cells_in_row_only_in_one_row_by_row[row_num]
-                and has_first_column_cell_with_text_by_row[row_num]):
-            projected_row_header_rows.add(row_num)
-            
-    return projected_row_header_rows
+    return {
+        row_num
+        for row_num, row in table_dict['rows'].items()
+        if (
+            not row['is_column_header']
+            and cells_with_text_count_by_row[row_num] == 1
+            and all_cells_in_row_only_in_one_row_by_row[row_num]
+            and has_first_column_cell_with_text_by_row[row_num]
+        )
+    }
 
 def annotate_projected_row_headers(table_dict, exclude=[]):    
     num_cols = len(table_dict['columns'])
     projected_row_header_rows = identify_projected_row_headers(table_dict)
-    
+
     projected_row_header_rows -= set(exclude)
 
     cells_to_remove = []
     for cell in table_dict['cells']:
-        if len(set(cell['row_nums']).intersection(projected_row_header_rows)) > 0:
+        if set(cell['row_nums']).intersection(projected_row_header_rows):
             if len(cell['text_content']) > 0:
                 cell['column_nums'] = list(range(num_cols))
                 cell['is_projected_row_header'] = True
@@ -342,13 +352,9 @@ def annotate_projected_row_headers(table_dict, exclude=[]):
     for cell in cells_to_remove:
         table_dict['fix'].append('merged projected row header')
         table_dict['cells'].remove(cell)
-        
+
     for row_num, row in table_dict['rows'].items():
-        if row_num in projected_row_header_rows:
-            row['is_projected_row_header'] = True
-        else:
-            row['is_projected_row_header'] = False
-            
+        row['is_projected_row_header'] = row_num in projected_row_header_rows
     # Delete projected row headers in first rows
     num_rows = len(table_dict['rows'])
     row_nums_to_delete = []
@@ -357,19 +363,19 @@ def annotate_projected_row_headers(table_dict, exclude=[]):
             row_nums_to_delete.append(row_num)
         else:
             break
-            
-    if len(row_nums_to_delete) > 0:
+
+    if row_nums_to_delete:
         for row_num in row_nums_to_delete:
             del table_dict['rows'][row_num]
             table_dict['fix'].append('removed projected row header at top of table')
             for cell in table_dict['cells'][:]:
                 if row_num in cell['row_nums']:
                     table_dict['cells'].remove(cell)
-                    
+
         table_dict['rows'] = {k-len(row_nums_to_delete): v for k, v in table_dict['rows'].items()}
         for cell in table_dict['cells']:
             cell['row_nums'] = [row_num-len(row_nums_to_delete) for row_num in cell['row_nums']]
-            
+
     # Delete projected row headers in last rows
     num_rows = len(table_dict['rows'])
     row_nums_to_delete = []
@@ -378,8 +384,8 @@ def annotate_projected_row_headers(table_dict, exclude=[]):
             row_nums_to_delete.append(row_num)
         else:
             break
-            
-    if len(row_nums_to_delete) > 0:
+
+    if row_nums_to_delete:
         for row_num in row_nums_to_delete:
             del table_dict['rows'][row_num]
             table_dict['fix'].append('removed projected row header at bottom of table')
@@ -430,21 +436,22 @@ def remove_empty_rows(table_dict):
         for row_num in cell['row_nums']:
             has_content_by_row[row_num] = has_content_by_row[row_num] or has_content
     row_num_corrections = np.cumsum([int(not has_content_by_row[row_num]) for row_num in range(num_rows)]).tolist()
-    
+
     # Delete cells in empty rows and renumber other cells
     cells_to_delete = []
     for cell in table_dict['cells']:
-        new_row_nums = []
-        for row_num in cell['row_nums']:
-            if has_content_by_row[row_num]:
-                new_row_nums.append(row_num - row_num_corrections[row_num])
+        new_row_nums = [
+            row_num - row_num_corrections[row_num]
+            for row_num in cell['row_nums']
+            if has_content_by_row[row_num]
+        ]
         cell['row_nums'] = new_row_nums
-        if len(new_row_nums) == 0:
+        if not new_row_nums:
             cells_to_delete.append(cell)
     for cell in cells_to_delete:
         table_dict['fix'].append('removed empty row')
         table_dict['cells'].remove(cell)
-    
+
     rows = {}
     for row_num, has_content in has_content_by_row.items():
         if has_content:
@@ -462,13 +469,13 @@ def merge_rows(table_dict):
                 if row_num1 >= row_num2:
                     continue
                 co_occurrence_matrix[row_num1, row_num2] += len(cell['column_nums'])
-                
+
     new_row_num = 0
     current_row_group = 0
     keep_row = [True]
     row_grouping = [current_row_group]
     for row_num in range(num_rows-1):
-        if not co_occurrence_matrix[row_num, row_num+1] == num_columns:
+        if co_occurrence_matrix[row_num, row_num + 1] != num_columns:
             keep_row.append(True)
             new_row_num += 1
         else:
@@ -478,7 +485,7 @@ def merge_rows(table_dict):
 
     for cell in table_dict['cells']:
         cell['row_nums'] = [row_grouping[row_num] for row_num in cell['row_nums'] if keep_row[row_num]]
-        
+
     table_dict['rows'] = {row_grouping[row_num]: table_dict['rows'][row_num] for row_num in range(num_rows) if keep_row[row_num]} 
             
         
@@ -491,21 +498,22 @@ def remove_empty_columns(table_dict):
         for column_num in cell['column_nums']:
             has_content_by_column[column_num] = has_content_by_column[column_num] or has_content
     column_num_corrections = np.cumsum([int(not has_content_by_column[column_num]) for column_num in range(num_columns)]).tolist()
-    
+
     # Delete cells in empty columns and renumber other cells
     cells_to_delete = []
     for cell in table_dict['cells']:
-        new_column_nums = []
-        for column_num in cell['column_nums']:
-            if has_content_by_column[column_num]:
-                new_column_nums.append(column_num - column_num_corrections[column_num])
+        new_column_nums = [
+            column_num - column_num_corrections[column_num]
+            for column_num in cell['column_nums']
+            if has_content_by_column[column_num]
+        ]
         cell['column_nums'] = new_column_nums
-        if len(new_column_nums) == 0:
+        if not new_column_nums:
             cells_to_delete.append(cell)
     for cell in cells_to_delete:
         table_dict['fix'].append('removed empty column')
         table_dict['cells'].remove(cell)
-    
+
     columns = {}
     for column_num, has_content in has_content_by_column.items():
         if has_content:
@@ -523,13 +531,13 @@ def merge_columns(table_dict):
                 if column_num1 >= column_num2:
                     continue
                 co_occurrence_matrix[column_num1, column_num2] += len(cell['row_nums'])
-                
+
     new_column_num = 0
     current_column_group = 0
     keep_column = [True]
     column_grouping = [current_column_group]
     for column_num in range(num_columns-1):
-        if not co_occurrence_matrix[column_num, column_num+1] == num_rows:
+        if co_occurrence_matrix[column_num, column_num + 1] != num_rows:
             keep_column.append(True)
             new_column_num += 1
         else:
@@ -539,7 +547,7 @@ def merge_columns(table_dict):
 
     for cell in table_dict['cells']:
         cell['column_nums'] = [column_grouping[column_num] for column_num in cell['column_nums'] if keep_column[column_num]]
-        
+
     table_dict['columns'] = {column_grouping[column_num]: table_dict['columns'][column_num] for column_num in range(num_columns) if keep_column[column_num]}
 
 # Look for tables with blank cells to merge in the first column
@@ -549,8 +557,8 @@ def merge_spanning_cells_in_first_column(table_dict, first_column_merge_exclude=
     for cell in table_dict['cells']:
         if cell['is_column_header'] or cell['is_projected_row_header']:
             continue
-        numeric_count = sum([1 for ch in cell['text_content'] if ch.isnumeric()])
-        alpha_count = sum([1 for ch in cell['text_content'] if ch.isalpha()])
+        numeric_count = sum(1 for ch in cell['text_content'] if ch.isnumeric())
+        alpha_count = sum(1 for ch in cell['text_content'] if ch.isalpha())
         for column_num in cell['column_nums']:
             numeric_count_by_column[column_num] += numeric_count
             alpha_count_by_column[column_num] += alpha_count
@@ -559,19 +567,19 @@ def merge_spanning_cells_in_first_column(table_dict, first_column_merge_exclude=
 
     first_column_cells = [cell for cell in table_dict['cells'] if 0 in cell['column_nums']]
     first_column_cells = sorted(first_column_cells, key=lambda item: max(item['row_nums']))
-    
+
     current_filled_cell = None
     groups = defaultdict(list)
     group_num = -1
     for cell in first_column_cells:
-        if len(set(cell['row_nums']).intersection(set(first_column_merge_exclude))) > 0:
+        if set(cell['row_nums']).intersection(set(first_column_merge_exclude)):
             group_num += 1
         elif len(cell['text_content']) > 0:
             group_num += 1
         if group_num >= 0:
             groups[group_num].append(cell)
-        
-    for group_num, group in groups.items():
+
+    for group in groups.values():
         if len(group) > 1 and not group[0]['is_projected_row_header'] and not group[0]['is_column_header']:
             merge_group(table_dict, group)
 
@@ -613,27 +621,17 @@ def merge_spanning_cells_in_first_column(table_dict, first_column_merge_exclude=
 
 def correct_header(table_dict, n=2, assume_header_if_more_than_n_columns=True, last_header_row=None):
     num_columns = len(table_dict['columns'])
-    num_rows = len(table_dict['rows'])
-    
     if last_header_row is None:
+
+        num_rows = len(table_dict['rows'])
 
         if num_columns < 2 or num_rows < 1:
             table_dict['reject'].append("small table")
             #raise SmallTableException("Table does not have at least one row and two columns") 
 
-        #---DETERMINE FULL EXTENT OF COLUMN HEADER
-        # - Each of the below steps determines different rows that must be in the column header.
-        # - The final column header includes all rows that are originally annotated as being in the column
-        #   header plus any additional rows determined to be in the column header by the following steps.
-
-        table_has_column_header = False
-
-        # First determine if there is definitely a column header. Four cases:
-
-        # 1. We specify that we want to assume there is one for all tables with more than two columns:
-        if assume_header_if_more_than_n_columns and num_columns > n:
-            table_has_column_header = True
-
+        table_has_column_header = bool(
+            assume_header_if_more_than_n_columns and num_columns > n
+        )
         # 2. An annotator says there is
         if not table_has_column_header:
             header_rows = [row_num for row_num, row in table_dict['rows'].items() if row['is_column_header']]
@@ -733,10 +731,10 @@ def correct_header(table_dict, n=2, assume_header_if_more_than_n_columns=True, l
             if minimum_projected_row_header_row <= last_header_row:
                 last_header_row = minimum_projected_row_header_row - 1
                 #incomplete_header = True
-                
+
     else:
         table_has_column_header = True
-            
+
     if last_header_row == 0 and table_dict['partial_table']:
         last_header_row = -1
     del table_dict['partial_table']
@@ -757,7 +755,7 @@ def correct_header(table_dict, n=2, assume_header_if_more_than_n_columns=True, l
 
     #if incomplete_header:
     #    raise IncompleteHeaderException("Set last header row to be just before minimum projected row header row".format(last_header_row, minimum_projected_row_header_row))
-    
+
     if not table_has_column_header and num_columns == 2:
         table_dict['reject'].append("ambiguous header")
         #raise AmbiguousHeaderException("Missing header annotation for table with two columns; cannot unambiguously determine header")

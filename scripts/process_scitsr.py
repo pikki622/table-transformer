@@ -32,7 +32,7 @@ def adjust_bbox_coordinates(data, doc):
     mat = doc[0].transformation_matrix
 
     for cell in ['cells']:
-        if not 'bbox' in cell:
+        if 'bbox' not in cell:
             continue
         bbox = list(Rect(cell['bbox']) * mat)
         bbox = [bbox[0] + media_box[0],
@@ -58,17 +58,17 @@ def align(page_string="", xml_string="", page_character_rewards=None, xml_charac
     
     scores = np.zeros((len(page_string) + 1, len(xml_string) + 1))
     pointers = np.zeros((len(page_string) + 1, len(xml_string) + 1))
-    
+
     # Initialize first column
     for row_idx in range(1, len(page_string) + 1):
         scores[row_idx, 0] = scores[row_idx - 1, 0] + page_boundary_gap_reward
         pointers[row_idx, 0] = -1
-        
+
     # Initialize first row
     for col_idx in range(1, len(xml_string) + 1):
         #scores[0, col_idx] = scores[0, col_idx - 1] + 0
         pointers[0, col_idx] = 1
-        
+
     for row_idx in range(1, len(page_string) + 1):
         for col_idx in range(1, len(xml_string) + 1):
             # Score if matching the characters
@@ -79,30 +79,30 @@ def align(page_string="", xml_string="", page_character_rewards=None, xml_charac
                     reward = match_reward
                 else:
                     reward = lowercase_match_reward
-                if not page_character_rewards is None:
+                if page_character_rewards is not None:
                     reward *= page_character_rewards[row_idx-1]
-                if not xml_character_rewards is None:
+                if xml_character_rewards is not None:
                     reward *= xml_character_rewards[col_idx-1]
                 diag_score = scores[row_idx - 1, col_idx - 1] + reward
             else:
                 diag_score = scores[row_idx - 1, col_idx - 1] + mismatch_penalty
-            
+
             if pointers[row_idx, col_idx - 1] == 1:
                 same_row_score = scores[row_idx, col_idx - 1] + page_continue_gap_penalty
             else:
                 same_row_score = scores[row_idx, col_idx - 1] + page_new_gap_penalty
-                if not xml_string[col_idx - 1] == ' ':
+                if xml_string[col_idx - 1] != ' ':
                     same_row_score += gap_not_after_space_penalty
-            
+
             if col_idx == len(xml_string):
                 same_col_score = scores[row_idx - 1, col_idx] + page_boundary_gap_reward
             elif pointers[row_idx - 1, col_idx] == -1:
                 same_col_score = scores[row_idx - 1, col_idx] + xml_continue_gap_penalty
             else:
                 same_col_score = scores[row_idx - 1, col_idx] + xml_new_gap_penalty
-                if not page_string[row_idx - 1] == ' ':
+                if page_string[row_idx - 1] != ' ':
                     same_col_score += gap_not_after_space_penalty
-               
+
             max_score = max(diag_score, same_col_score, same_row_score)
             scores[row_idx, col_idx] = max_score
             if diag_score == max_score:
@@ -111,17 +111,17 @@ def align(page_string="", xml_string="", page_character_rewards=None, xml_charac
                 pointers[row_idx, col_idx] = -1
             else:
                 pointers[row_idx, col_idx] = 1
-    
+
     score = scores[len(page_string), len(xml_string)]
-    
+
     if score_only:
         return score
-    
+
     cur_row = len(page_string)
     cur_col = len(xml_string)
     aligned_page_string = ""
     aligned_xml_string = ""
-    while not (cur_row == 0 and cur_col == 0):
+    while cur_row != 0 or cur_col != 0:
         if pointers[cur_row, cur_col] == -1:
             cur_row -= 1
             aligned_xml_string += gap_character
@@ -135,12 +135,12 @@ def align(page_string="", xml_string="", page_character_rewards=None, xml_charac
             cur_col -= 1
             aligned_xml_string += xml_string[cur_col]
             aligned_page_string += page_string[cur_row]
-            
+
     aligned_page_string = aligned_page_string[::-1]
     aligned_xml_string = aligned_xml_string[::-1]
-    
+
     alignment = [aligned_page_string, aligned_xml_string]
-    
+
     return alignment, score
 
 
@@ -151,15 +151,14 @@ def locate_table(page_words, table):
 
     page_text_source = []
     for num, word in enumerate(sorted_words):
-        for c in word[4]:
-            page_text_source.append(num)
+        page_text_source.extend(num for _ in word[4])
         page_text_source.append(None)
     page_text_source = page_text_source[:-1]
-        
+
     table_text = table_to_text(table)
     table_text_source = []
     for num, cell in enumerate(table['cells']):
-        for c in cell['text_content'].strip():
+        for _ in cell['text_content'].strip():
             table_text_source.append(num)
         table_text_source.append(None)
     table_text_source = table_text_source[:-1]
@@ -176,52 +175,48 @@ def locate_table(page_words, table):
     alignment, score = align(X, Y, match_reward=match_reward, mismatch_penalty=mismatch_penalty,
                              page_boundary_gap_reward=page_boundary_gap_reward, score_only=False,
           gap_character='~')
-    
+
     table_words = set()
-    column_words = dict()
-    row_words = dict()
-    cell_words = dict()
+    column_words = {}
+    row_words = {}
+    cell_words = {}
     page_count = 0
     table_count = 0
-    
+
     for char1, char2 in zip(alignment[0], alignment[1]):
-        if not char1 == "~":
+        if char1 != "~":
             if char1 == char2:
                 table_words.add(page_text_source[page_count])
                 cell_num = table_text_source[table_count]
-                if not cell_num is None:
+                if cell_num is not None:
                     if cell_num in cell_words:
                         cell_words[cell_num].add(page_text_source[page_count])
                     else:
-                        cell_words[cell_num] = set([page_text_source[page_count]])
+                        cell_words[cell_num] = {page_text_source[page_count]}
             page_count += 1
-        if not char2 == "~":
+        if char2 != "~":
             table_count += 1
-            
-    inliers = []
-    for word_num in table_words:
-        if word_num:
-            inliers.append(sorted_words[word_num])
-    
-    if len(inliers) == 0:
+
+    inliers = [sorted_words[word_num] for word_num in table_words if word_num]
+    if not inliers:
         return None, None
-        
+
     cell_bboxes = {}
     for cell_num, cell in enumerate(table['cells']):
         cell_bbox = None
         if cell_num in cell_words:
             for word_num in cell_words[cell_num]:
-                if not word_num is None:
-                    word_bbox = sorted_words[word_num][0:4]
+                if word_num is not None:
+                    word_bbox = sorted_words[word_num][:4]
                     if not cell_bbox:
-                        cell_bbox = [entry for entry in word_bbox]
+                        cell_bbox = list(word_bbox)
                     else:
                         cell_bbox[0] = min(cell_bbox[0], word_bbox[0])
                         cell_bbox[1] = min(cell_bbox[1], word_bbox[1])
                         cell_bbox[2] = max(cell_bbox[2], word_bbox[2])
                         cell_bbox[3] = max(cell_bbox[3], word_bbox[3])
         cell_bboxes[cell_num] = cell_bbox
-    
+
     return cell_bboxes, inliers
 
 
@@ -237,7 +232,7 @@ def adjust_bbox_coordinates(data, doc):
     mat = doc[0].transformation_matrix
 
     for cell in data['html']['cells']:
-        if not 'bbox' in cell:
+        if 'bbox' not in cell:
             continue
         bbox = list(Rect(cell['bbox']) * mat)
         bbox = [bbox[0] + media_box[0],
@@ -249,15 +244,13 @@ def adjust_bbox_coordinates(data, doc):
 
 def create_document_page_image(doc, page_num, zoom=None, output_image_max_dim=1000):
     page = doc[page_num]
-    
+
     if zoom is None:
         zoom = output_image_max_dim / max(page.rect)
-        
+
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix = mat, alpha = False)
-    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-    
-    return img
+    return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
 
 class AnnotationMismatchException(Exception):
@@ -345,37 +338,36 @@ class TextAnnotationQualityException(Exception):
 
 
 def create_table_dict(annotation_data):
-    table_dict = {}
-    table_dict['reject'] = []
-    table_dict['fix'] = []
-    
+    table_dict = {'reject': [], 'fix': []}
     cells = []
     for cell in annotation_data['cells']:
-        new_cell = {}
-        new_cell['text_content'] = ' '.join(cell['content']).strip()
-        new_cell['pdf_text_tight_bbox'] = []
+        new_cell = {
+            'text_content': ' '.join(cell['content']).strip(),
+            'pdf_text_tight_bbox': [],
+        }
         new_cell['column_nums'] = list(range(cell['start_col'], cell['end_col']+1))
         new_cell['row_nums'] = list(range(cell['start_row'], cell['end_row']+1))
         new_cell['is_column_header'] = False
         cells.append(new_cell)
-        
+
     # Make sure no grid locations are duplicated
     # Could be bad data or bad parsing algorithm
     grid_cell_locations = []
     for cell in cells:
         for row_num in cell['row_nums']:
-            for column_num in cell['column_nums']:
-                grid_cell_locations.append((row_num, column_num))
-    if not len(grid_cell_locations) == len(set(grid_cell_locations)):
+            grid_cell_locations.extend(
+                (row_num, column_num) for column_num in cell['column_nums']
+            )
+    if len(grid_cell_locations) != len(set(grid_cell_locations)):
         table_dict['reject'].append("HTML overlapping grid cells")
-        
-    num_rows = max([max(cell['row_nums']) for cell in cells]) + 1
-    num_columns = max([max(cell['column_nums']) for cell in cells]) + 1
-        
+
+    num_rows = max(max(cell['row_nums']) for cell in cells) + 1
+    num_columns = max(max(cell['column_nums']) for cell in cells) + 1
+
     table_dict['cells'] = cells
     table_dict['rows'] = {row_num: {'is_column_header': False} for row_num in range(num_rows)}
     table_dict['columns'] = {column_num: {} for column_num in range(num_columns)}
-    
+
     return table_dict
 
 

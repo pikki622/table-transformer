@@ -81,19 +81,19 @@ def get_transform(data_type, image_set):
 
 
 def get_class_map(data_type):
-    if data_type == 'structure':
-        class_map = {
+    return (
+        {
             'table': 0,
             'table column': 1,
             'table row': 2,
             'table column header': 3,
             'table projected row header': 4,
             'table spanning cell': 5,
-            'no object': 6
+            'no object': 6,
         }
-    else:
-        class_map = {'table': 0, 'table rotated': 1, 'no object': 2}
-    return class_map
+        if data_type == 'structure'
+        else {'table': 0, 'table rotated': 1, 'no object': 2}
+    )
 
 
 def get_data(args):
@@ -169,17 +169,17 @@ def get_data(args):
                                       num_workers=args.num_workers)
         return data_loader_test, dataset_test
 
-    elif args.mode == "grits" or args.mode == "grits-all":
-        dataset_test = PDFTablesDataset(os.path.join(args.data_root_dir,
-                                                     "test"),
-                                        RandomMaxResize(1000, 1000),
-                                        include_original=True,
-                                        max_size=args.max_test_size,
-                                        make_coco=False,
-                                        image_extension=".jpg",
-                                        xml_fileset="test_filelist.txt",
-                                        class_map=class_map)
-        return dataset_test
+    elif args.mode in ["grits", "grits-all"]:
+        return PDFTablesDataset(
+            os.path.join(args.data_root_dir, "test"),
+            RandomMaxResize(1000, 1000),
+            include_original=True,
+            max_size=args.max_test_size,
+            make_coco=False,
+            image_extension=".jpg",
+            xml_fileset="test_filelist.txt",
+            class_map=class_map,
+        )
 
 
 def get_model(args, device):
@@ -240,7 +240,7 @@ def train(args, model, criterion, postprocessors, device):
                                                    gamma=args.lr_gamma)
 
     max_batches_per_epoch = int(train_len / args.batch_size)
-    print("Max batches per epoch: {}".format(max_batches_per_epoch))
+    print(f"Max batches per epoch: {max_batches_per_epoch}")
 
     resume_checkpoint = False
     if args.model_load_path:
@@ -261,14 +261,16 @@ def train(args, model, criterion, postprocessors, device):
             print("*** ERROR: Optimizer state of saved checkpoint not found. "
                   "To resume training with new initialized values add the --load_weights_only flag.")
             raise Exception("ERROR: Optimizer state of saved checkpoint not found. Must add --load_weights_only flag to resume training without.")          
-        
+
         if not args.load_weights_only and 'epoch' in checkpoint:
             args.start_epoch = checkpoint['epoch'] + 1
         elif args.load_weights_only:
             print("*** WARNING: Resuming training and ignoring previously saved epoch. "
                   "To resume from previously saved epoch, remove the --load_weights_only flag.")
         else:
-            print("*** WARNING: Epoch of saved model not found. Starting at epoch {}.".format(args.start_epoch))
+            print(
+                f"*** WARNING: Epoch of saved model not found. Starting at epoch {args.start_epoch}."
+            )
 
     # Use user-specified save directory, if specified
     if args.model_save_dir:
@@ -290,9 +292,9 @@ def train(args, model, criterion, postprocessors, device):
         print("*** WARNING: Output model path exists but is not being used to resume training; training will overwrite it.")
 
     if args.start_epoch >= args.epochs:
-        print("*** WARNING: Starting epoch ({}) is greater or equal to the number of training epochs ({}).".format(
-            args.start_epoch, args.epochs
-        ))
+        print(
+            f"*** WARNING: Starting epoch ({args.start_epoch}) is greater or equal to the number of training epochs ({args.epochs})."
+        )
 
     print("Start training")
     start_time = datetime.now()
@@ -332,7 +334,9 @@ def train(args, model, criterion, postprocessors, device):
 
         # Save checkpoint for evaluation
         if (epoch+1) % args.checkpoint_freq == 0:
-            model_save_path_epoch = os.path.join(output_directory, 'model_' + str(epoch+1) + '.pth')
+            model_save_path_epoch = os.path.join(
+                output_directory, f'model_{str(epoch + 1)}.pth'
+            )
             torch.save(model.state_dict(), model_save_path_epoch)
 
     print('Total training time: ', datetime.now() - start_time)
@@ -342,7 +346,7 @@ def main():
     cmd_args = get_args().__dict__
     config_args = json.load(open(cmd_args['config_file'], 'rb'))
     for key, value in cmd_args.items():
-        if not key in config_args or not value is None:
+        if key not in config_args or value is not None:
             config_args[key] = value
     #config_args.update(cmd_args)
     args = type('Args', (object,), config_args)
@@ -351,7 +355,9 @@ def main():
 
     # Check for debug mode
     if args.mode == 'eval' and args.debug:
-        print("Running evaluation/inference in DEBUG mode, processing will take longer. Saving output to: {}.".format(args.debug_save_dir))
+        print(
+            f"Running evaluation/inference in DEBUG mode, processing will take longer. Saving output to: {args.debug_save_dir}."
+        )
         os.makedirs(args.debug_save_dir, exist_ok=True)
 
     # fix the seed for reproducibility

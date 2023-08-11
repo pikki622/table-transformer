@@ -39,7 +39,7 @@ def adjust_bbox_coordinates(data, doc):
     mat = doc[0].transformation_matrix
 
     for cell in data['html']['cells']:
-        if not 'bbox' in cell:
+        if 'bbox' not in cell:
             continue
         bbox = list(Rect(cell['bbox']) * mat)
         bbox = [bbox[0] + media_box[0],
@@ -51,15 +51,13 @@ def adjust_bbox_coordinates(data, doc):
         
 def create_document_page_image(doc, page_num, zoom=None, output_image_max_dim=1000):
     page = doc[page_num]
-    
+
     if zoom is None:
         zoom = output_image_max_dim / max(page.rect)
-        
+
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix = mat, alpha = False)
-    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-    
-    return img
+    return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
 
 def parse_html_table(table_html):
@@ -68,30 +66,20 @@ def parse_html_table(table_html):
     except Exception as e:
         print(e)
         return None
-    
+
     table_cells = []
-    
+
     occupied_columns_by_row = defaultdict(set)
     current_row = -1
 
     # Get all td tags
-    stack = []
-    stack.append((tree, False))
-    while len(stack) > 0:
+    stack = [(tree, False)]
+    while stack:
         current, in_header = stack.pop()
 
-        if current.tag == 'tr':
-            current_row += 1
-            
-        if current.tag == 'td' or current.tag =='th':
-            if "colspan" in current.attrib:
-                colspan = int(current.attrib["colspan"])
-            else:
-                colspan = 1
-            if "rowspan" in current.attrib:
-                rowspan = int(current.attrib["rowspan"])
-            else:
-                rowspan = 1
+        if current.tag in ['td', 'th']:
+            colspan = int(current.attrib["colspan"]) if "colspan" in current.attrib else 1
+            rowspan = int(current.attrib["rowspan"]) if "rowspan" in current.attrib else 1
             row_nums = list(range(current_row, current_row + rowspan))
             try:
                 max_occupied_column = max(occupied_columns_by_row[current_row])
@@ -101,64 +89,63 @@ def parse_html_table(table_html):
             column_nums = list(range(current_column, current_column + colspan))
             for row_num in row_nums:
                 occupied_columns_by_row[row_num].update(column_nums)
-                
-            cell_dict = dict()
-            cell_dict['row_nums'] = row_nums
-            cell_dict['column_nums'] = column_nums
-            cell_dict['is_column_header'] = current.tag == 'th' or in_header
+
+            cell_dict = {
+                'row_nums': row_nums,
+                'column_nums': column_nums,
+                'is_column_header': current.tag == 'th' or in_header,
+            }
             table_cells.append(cell_dict)
 
+        elif current.tag == 'tr':
+            current_row += 1
+
         children = list(current)
-        for child in children[::-1]:
-            stack.append((child, in_header or current.tag == 'th' or current.tag == 'thead'))
-    
+        stack.extend(
+            (child, in_header or current.tag == 'th' or current.tag == 'thead')
+            for child in children[::-1]
+        )
     return table_cells
 
 
 def create_table_dict(annotation_data):
-    table_dict = {}
-    table_dict['reject'] = []
-    table_dict['fix'] = []
-    
+    table_dict = {'reject': [], 'fix': []}
     html = ''.join(annotation_data['html']['structure']['tokens'])
-    
+
     cells = parse_html_table(html)
     pdf_cells = annotation_data['html']['cells']
-    
+
     # Make sure there are the same number of annotated HTML and PDF cells
-    if not len(cells) == len(pdf_cells):
+    if len(cells) != len(pdf_cells):
         table_dict['reject'].append("annotation mismatch")
     for cell, pdf_cell in zip(cells, pdf_cells):
         cell['json_text_content'] = ''.join(pdf_cell['tokens']).strip()
-        if 'bbox' in pdf_cell:
-            cell['pdf_text_tight_bbox'] = pdf_cell['bbox']
-        else:
-            cell['pdf_text_tight_bbox'] = []
-        
+        cell['pdf_text_tight_bbox'] = pdf_cell['bbox'] if 'bbox' in pdf_cell else []
     # Make sure no grid locations are duplicated
     grid_cell_locations = []
     for cell in cells:
         for row_num in cell['row_nums']:
-            for column_num in cell['column_nums']:
-                grid_cell_locations.append((row_num, column_num))
-    if not len(grid_cell_locations) == len(set(grid_cell_locations)):
+            grid_cell_locations.extend(
+                (row_num, column_num) for column_num in cell['column_nums']
+            )
+    if len(grid_cell_locations) != len(set(grid_cell_locations)):
         table_dict['reject'].append("HTML overlapping grid cells")
-        
+
     grid_cell_locations = set(grid_cell_locations)
-                
-    num_rows = max([max(cell['row_nums']) for cell in cells]) + 1
-    num_columns = max([max(cell['column_nums']) for cell in cells]) + 1
+
+    num_rows = max(max(cell['row_nums']) for cell in cells) + 1
+    num_columns = max(max(cell['column_nums']) for cell in cells) + 1
     expected_num_cells = num_rows * num_columns
     actual_num_cells = len(grid_cell_locations)
-        
+
     # Make sure all grid locations are present
-    if not expected_num_cells == actual_num_cells:
+    if expected_num_cells != actual_num_cells:
         table_dict['reject'].append("HTML missing grid cells")
-        
+
     table_dict['cells'] = cells
     table_dict['rows'] = {row_num: {'is_column_header': False} for row_num in range(num_rows)}
     table_dict['columns'] = {column_num: {} for column_num in range(num_columns)}
-    
+
     return table_dict
 
 
@@ -169,31 +156,34 @@ def complete_table_grid(table_dict):
 
     # Determine bounding box for rows and columns
     for cell in table_dict['cells']:
-        if not 'pdf_text_tight_bbox' in cell or len(cell['pdf_text_tight_bbox']) == 0:
+        if (
+            'pdf_text_tight_bbox' not in cell
+            or len(cell['pdf_text_tight_bbox']) == 0
+        ):
             continue
 
         bbox = cell['pdf_text_tight_bbox'] 
 
         table_rect.include_rect(list(bbox))
-        
+
         min_row = min(cell['row_nums'])
         if rects_by_row[min_row][1] is None:
             rects_by_row[min_row][1] = bbox[1]
         else:
             rects_by_row[min_row][1] = min(rects_by_row[min_row][1], bbox[1])
-            
+
         max_row = max(cell['row_nums'])
         if rects_by_row[max_row][3] is None:
             rects_by_row[max_row][3] = bbox[3]
         else:
             rects_by_row[max_row][3] = max(rects_by_row[max_row][3], bbox[3])
-            
+
         min_column = min(cell['column_nums'])
         if rects_by_column[min_column][0] is None:
             rects_by_column[min_column][0] = bbox[0]
         else:
             rects_by_column[min_column][0] = min(rects_by_column[min_column][0], bbox[0])
-            
+
         max_column = max(cell['column_nums'])
         if rects_by_column[max_column][2] is None:
             rects_by_column[max_column][2] = bbox[2]
@@ -203,21 +193,21 @@ def complete_table_grid(table_dict):
     table_bbox = list(table_rect)
     table_dict['pdf_table_bbox'] = table_bbox
 
-    for row_num, row_rect in rects_by_row.items():
+    for row_rect in rects_by_row.values():
         row_rect[0] = table_bbox[0]
         row_rect[2] = table_bbox[2]
 
-    for col_num, col_rect in rects_by_column.items():
+    for col_rect in rects_by_column.values():
         col_rect[1] = table_bbox[1]
         col_rect[3] = table_bbox[3]
-        
+
     for k, row in table_dict['rows'].items():
         v = rects_by_row[k]
         table_dict['rows'][k]['pdf_row_bbox'] = list(v)
     for k, column in table_dict['columns'].items():
         v = rects_by_column[k]
         table_dict['columns'][k]['pdf_column_bbox'] = list(v)
-        
+
     for k, row in table_dict['rows'].items():    
         for elem in row['pdf_row_bbox']:
             if elem is None:
@@ -226,7 +216,7 @@ def complete_table_grid(table_dict):
         for elem in column['pdf_column_bbox']:
             if elem is None:
                 table_dict['reject'].append("undetermined column boundary")
-        
+
     # Intersect each row and column to determine grid cell bounding boxes
     for cell in table_dict['cells']:
         rows_rect = Rect()
@@ -259,14 +249,16 @@ def identify_projected_row_headers(table_dict):
         for row_num in cell['row_nums']:
             all_cells_in_row_only_in_one_row_by_row[row_num] = all_cells_in_row_only_in_one_row_by_row[row_num] and one_row_only
 
-    projected_row_header_rows = set()
-    for row_num, row in table_dict['rows'].items():
-        if (not row['is_column_header'] and cells_with_text_count_by_row[row_num] == 1
-                and all_cells_in_row_only_in_one_row_by_row[row_num]
-                and has_first_column_cell_with_text_by_row[row_num]):
-            projected_row_header_rows.add(row_num)
-            
-    return projected_row_header_rows
+    return {
+        row_num
+        for row_num, row in table_dict['rows'].items()
+        if (
+            not row['is_column_header']
+            and cells_with_text_count_by_row[row_num] == 1
+            and all_cells_in_row_only_in_one_row_by_row[row_num]
+            and has_first_column_cell_with_text_by_row[row_num]
+        )
+    }
 
 def annotate_projected_row_headers(table_dict):    
     num_cols = len(table_dict['columns'])
@@ -274,7 +266,7 @@ def annotate_projected_row_headers(table_dict):
 
     cells_to_remove = []
     for cell in table_dict['cells']:
-        if len(set(cell['row_nums']).intersection(projected_row_header_rows)) > 0:
+        if set(cell['row_nums']).intersection(projected_row_header_rows):
             if len(cell['json_text_content']) > 0:
                 cell['column_nums'] = list(range(num_cols))
                 cell['is_projected_row_header'] = True
@@ -286,13 +278,9 @@ def annotate_projected_row_headers(table_dict):
     for cell in cells_to_remove:
         table_dict['fix'].append('merged projected row header')
         table_dict['cells'].remove(cell)
-        
+
     for row_num, row in table_dict['rows'].items():
-        if row_num in projected_row_header_rows:
-            row['is_projected_row_header'] = True
-        else:
-            row['is_projected_row_header'] = False
-            
+        row['is_projected_row_header'] = row_num in projected_row_header_rows
     # Delete projected row headers in last rows
     num_rows = len(table_dict['rows'])
     row_nums_to_delete = []
@@ -301,8 +289,8 @@ def annotate_projected_row_headers(table_dict):
             row_nums_to_delete.append(row_num)
         else:
             break
-            
-    if len(row_nums_to_delete) > 0:
+
+    if row_nums_to_delete:
         for row_num in row_nums_to_delete:
             del table_dict['rows'][row_num]
             table_dict['fix'].append('removed projected row header at bottom of table')
@@ -354,21 +342,22 @@ def remove_empty_rows(table_dict):
         for row_num in cell['row_nums']:
             has_content_by_row[row_num] = has_content_by_row[row_num] or has_content
     row_num_corrections = np.cumsum([int(not has_content_by_row[row_num]) for row_num in range(num_rows)]).tolist()
-    
+
     # Delete cells in empty rows and renumber other cells
     cells_to_delete = []
     for cell in table_dict['cells']:
-        new_row_nums = []
-        for row_num in cell['row_nums']:
-            if has_content_by_row[row_num]:
-                new_row_nums.append(row_num - row_num_corrections[row_num])
+        new_row_nums = [
+            row_num - row_num_corrections[row_num]
+            for row_num in cell['row_nums']
+            if has_content_by_row[row_num]
+        ]
         cell['row_nums'] = new_row_nums
-        if len(new_row_nums) == 0:
+        if not new_row_nums:
             cells_to_delete.append(cell)
     for cell in cells_to_delete:
         table_dict['fix'].append('removed empty row')
         table_dict['cells'].remove(cell)
-    
+
     rows = {}
     for row_num, has_content in has_content_by_row.items():
         if has_content:
@@ -386,13 +375,13 @@ def merge_rows(table_dict):
                 if row_num1 >= row_num2:
                     continue
                 co_occurrence_matrix[row_num1, row_num2] += len(cell['column_nums'])
-                
+
     new_row_num = 0
     current_row_group = 0
     keep_row = [True]
     row_grouping = [current_row_group]
     for row_num in range(num_rows-1):
-        if not co_occurrence_matrix[row_num, row_num+1] == num_columns:
+        if co_occurrence_matrix[row_num, row_num + 1] != num_columns:
             keep_row.append(True)
             new_row_num += 1
         else:
@@ -402,7 +391,7 @@ def merge_rows(table_dict):
 
     for cell in table_dict['cells']:
         cell['row_nums'] = [row_grouping[row_num] for row_num in cell['row_nums'] if keep_row[row_num]]
-        
+
     table_dict['rows'] = {row_grouping[row_num]: table_dict['rows'][row_num] for row_num in range(num_rows) if keep_row[row_num]} 
             
         
@@ -415,21 +404,22 @@ def remove_empty_columns(table_dict):
         for column_num in cell['column_nums']:
             has_content_by_column[column_num] = has_content_by_column[column_num] or has_content
     column_num_corrections = np.cumsum([int(not has_content_by_column[column_num]) for column_num in range(num_columns)]).tolist()
-    
+
     # Delete cells in empty columns and renumber other cells
     cells_to_delete = []
     for cell in table_dict['cells']:
-        new_column_nums = []
-        for column_num in cell['column_nums']:
-            if has_content_by_column[column_num]:
-                new_column_nums.append(column_num - column_num_corrections[column_num])
+        new_column_nums = [
+            column_num - column_num_corrections[column_num]
+            for column_num in cell['column_nums']
+            if has_content_by_column[column_num]
+        ]
         cell['column_nums'] = new_column_nums
-        if len(new_column_nums) == 0:
+        if not new_column_nums:
             cells_to_delete.append(cell)
     for cell in cells_to_delete:
         table_dict['fix'].append('removed empty column')
         table_dict['cells'].remove(cell)
-    
+
     columns = {}
     for column_num, has_content in has_content_by_column.items():
         if has_content:
@@ -447,13 +437,13 @@ def merge_columns(table_dict):
                 if column_num1 >= column_num2:
                     continue
                 co_occurrence_matrix[column_num1, column_num2] += len(cell['row_nums'])
-                
+
     new_column_num = 0
     current_column_group = 0
     keep_column = [True]
     column_grouping = [current_column_group]
     for column_num in range(num_columns-1):
-        if not co_occurrence_matrix[column_num, column_num+1] == num_rows:
+        if co_occurrence_matrix[column_num, column_num + 1] != num_rows:
             keep_column.append(True)
             new_column_num += 1
         else:
@@ -463,7 +453,7 @@ def merge_columns(table_dict):
 
     for cell in table_dict['cells']:
         cell['column_nums'] = [column_grouping[column_num] for column_num in cell['column_nums'] if keep_column[column_num]]
-        
+
     table_dict['columns'] = {column_grouping[column_num]: table_dict['columns'][column_num] for column_num in range(num_columns) if keep_column[column_num]}
     
     
@@ -474,8 +464,8 @@ def merge_spanning_cells_in_first_column(table_dict):
     for cell in table_dict['cells']:
         if cell['is_column_header'] or cell['is_projected_row_header']:
             continue
-        numeric_count = sum([1 for ch in cell['json_text_content'] if ch.isnumeric()])
-        alpha_count = sum([1 for ch in cell['json_text_content'] if ch.isalpha()])
+        numeric_count = sum(1 for ch in cell['json_text_content'] if ch.isnumeric())
+        alpha_count = sum(1 for ch in cell['json_text_content'] if ch.isalpha())
         for column_num in cell['column_nums']:
             numeric_count_by_column[column_num] += numeric_count
             alpha_count_by_column[column_num] += alpha_count
@@ -484,7 +474,7 @@ def merge_spanning_cells_in_first_column(table_dict):
 
     first_column_cells = [cell for cell in table_dict['cells'] if 0 in cell['column_nums']]
     first_column_cells = sorted(first_column_cells, key=lambda item: max(item['row_nums']))
-    
+
     current_filled_cell = None
     groups = defaultdict(list)
     group_num = -1
@@ -493,8 +483,8 @@ def merge_spanning_cells_in_first_column(table_dict):
             group_num += 1
         if group_num >= 0:
             groups[group_num].append(cell)
-        
-    for group_num, group in groups.items():
+
+    for group in groups.values():
         if len(group) > 1 and not group[0]['is_projected_row_header'] and not group[0]['is_column_header']:
             merge_group(table_dict, group)
             

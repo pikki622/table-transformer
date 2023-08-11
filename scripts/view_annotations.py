@@ -48,10 +48,14 @@ def read_pascal_voc(xml_file: str):
 
     return bboxes, labels
 
-color_map = defaultdict(lambda: ('magenta', 0, 1))
-color_map.update({'table': ('brown', 0.1, 3), 'table row': ('blue', 0.04, 1),
-                  'table column': ('red', 0.04, 1), 'table projected row header': ('cyan', 0.2, 3),
-                  'table column header': ('magenta', 0.2, 3), 'table spanning cell': ('green', 0.6, 3)})
+color_map = defaultdict(lambda: ('magenta', 0, 1)) | {
+    'table': ('brown', 0.1, 3),
+    'table row': ('blue', 0.04, 1),
+    'table column': ('red', 0.04, 1),
+    'table projected row header': ('cyan', 0.2, 3),
+    'table column header': ('magenta', 0.2, 3),
+    'table spanning cell': ('green', 0.6, 3),
+}
 
 def plot_bbox(ax, bbox, color='magenta', linewidth=1, alpha=0):
     rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=linewidth, 
@@ -91,13 +95,13 @@ def main():
     xml_filenames = [elem for elem in os.listdir(os.path.join(data_directory, split)) if elem.endswith(".xml")]
 
     for idx, filename in enumerate(xml_filenames):
-        if not num_samples is None and idx == num_samples:
+        if num_samples is not None and idx == num_samples:
             break
         print(filename)
         try:
             xml_filepath = os.path.join(data_directory, split, filename)
             img_filepath = xml_filepath.replace(split, "images").replace(".xml", ".jpg")
-            
+
             bboxes, labels = read_pascal_voc(xml_filepath)
             img = Image.open(img_filepath)
 
@@ -108,7 +112,7 @@ def main():
             #        words = json.load(json_file)
             #except:
             #    words = []
-            
+
             ax = plt.gca()
             ax.imshow(img, interpolation="lanczos")
             plt.gcf().set_size_inches((24, 24))
@@ -122,17 +126,16 @@ def main():
 
             for column_num, bbox in enumerate(columns):
                 if column_num % 2 == 0:
-                    linewidth = 2
                     alpha = 0.6
                     facecolor = 'none'
                     edgecolor = 'red'
                     hatch = '..'
                 else:
-                    linewidth = 2
                     alpha = 0.15
                     facecolor = (1, 0, 0)
                     edgecolor = (0.8, 0, 0)
                     hatch = ''
+                linewidth = 2
                 rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=0, 
                                          edgecolor=edgecolor, facecolor=facecolor, linestyle="-",
                                          hatch=hatch, alpha=alpha)
@@ -144,17 +147,16 @@ def main():
 
             for row_num, bbox in enumerate(rows):
                 if row_num % 2 == 1:
-                    linewidth = 2
                     alpha = 0.6
                     edgecolor = 'blue'
                     facecolor = 'none'
                     hatch = '....'
                 else:
-                    linewidth = 2
                     alpha = 0.1
                     facecolor = (0, 0, 1)
                     edgecolor = (0, 0, 0.8)
                     hatch = ''
+                linewidth = 2
                 rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=0, 
                                          edgecolor=edgecolor, facecolor=facecolor, linestyle="-",
                                          hatch=hatch, alpha=alpha)
@@ -163,7 +165,7 @@ def main():
                                              edgecolor='blue', facecolor='none', linestyle="-",
                                              alpha=0.8)
                 ax.add_patch(rect)
-            
+
             for bbox in column_headers:
                 linewidth = 3
                 alpha = 0.3
@@ -192,10 +194,10 @@ def main():
                                          edgecolor=edgecolor,facecolor='none',linestyle=linestyle, hatch='\\\\')
                 ax.add_patch(rect)
 
+            alpha = 0.4
+            linewidth = 4
             for bbox in spanning_cells:
                 color = (0.2, 0.5, 0.2) #(0, 0.4, 0.4)
-                alpha = 0.4
-                linewidth = 4
                 linestyle="-"
                 rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=linewidth, 
                                          edgecolor='none',facecolor=color, alpha=alpha)
@@ -225,7 +227,7 @@ def main():
                                Patch(facecolor=(1, 0.965, 0.825), edgecolor=(1, 0.9, 0.5),
                                      label='Projected row header', hatch='\\\\')]
             ax.legend(handles=legend_elements, bbox_to_anchor=(0, -0.02), loc='upper left', borderaxespad=0,
-                         fontsize=16, ncol=4)  
+                         fontsize=16, ncol=4)
             plt.gcf().set_size_inches(20, 20)
             plt.axis('off')
             save_filepath = os.path.join(output_directory, filename.replace(".xml", "_ANNOTATIONS.jpg"))

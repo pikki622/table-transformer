@@ -77,9 +77,7 @@ def read_pdf(pdf_filepath):
     '''
     Read in PDF file as a PyMyPDF doc.
     '''
-    doc = fitz.open(pdf_filepath)
-    
-    return doc
+    return fitz.open(pdf_filepath)
 
 
 def compare_meta(word1, word2):
@@ -95,13 +93,10 @@ def compare_meta(word1, word2):
         return -1
     if word1[6] > word2[6]:
         return 1
-    
+
     if word1[7] < word2[7]:
         return -1
-    if word1[7] > word2[7]:
-        return 1
-
-    return 0
+    return 1 if word1[7] > word2[7] else 0
 
 
 def get_page_words(page):
@@ -138,11 +133,7 @@ def get_bbox_span_subset(spans, bbox, threshold=0.5):
 
     threshold: the fraction of the span that must overlap with the bbox.
     """
-    span_subset = []
-    for span in spans:
-        if overlaps(span['bbox'], bbox, threshold):
-            span_subset.append(span)
-    return span_subset
+    return [span for span in spans if overlaps(span['bbox'], bbox, threshold)]
 
 
 def extract_text_from_spans(spans, join_with_space=True, remove_integer_superscripts=True):
@@ -150,12 +141,9 @@ def extract_text_from_spans(spans, join_with_space=True, remove_integer_superscr
     Convert a collection of page tokens/words/spans into a single text string.
     """
 
-    if join_with_space:
-        join_char = " "
-    else:
-        join_char = ""
+    join_char = " " if join_with_space else ""
     spans_copy = spans[:]
-    
+
     if remove_integer_superscripts:
         for span in spans:
             flags = span['flags']
@@ -167,22 +155,31 @@ def extract_text_from_spans(spans, join_with_space=True, remove_integer_superscr
 
     if len(spans_copy) == 0:
         return ""
-    
+
     spans_copy.sort(key=lambda span: span['span_num'])
     spans_copy.sort(key=lambda span: span['line_num'])
     spans_copy.sort(key=lambda span: span['block_num'])
-    
+
     # Force the span at the end of every line within a block to have exactly one space
     # unless the line ends with a space or ends with a non-space followed by a hyphen
     line_texts = []
     line_span_texts = [spans_copy[0]['text']]
     for span1, span2 in zip(spans_copy[:-1], spans_copy[1:]):
-        if not span1['block_num'] == span2['block_num'] or not span1['line_num'] == span2['line_num']:
+        if (
+            span1['block_num'] != span2['block_num']
+            or span1['line_num'] != span2['line_num']
+        ):
             line_text = join_char.join(line_span_texts).strip()
-            if (len(line_text) > 0
-                    and not line_text[-1] == ' '
-                    and not (len(line_text) > 1 and line_text[-1] == "-" and not line_text[-2] == ' ')):
-                if not join_with_space:
+            if not join_with_space:
+                if (
+                    line_text != ""
+                    and line_text[-1] != ' '
+                    and (
+                        len(line_text) <= 1
+                        or line_text[-1] != "-"
+                        or line_text[-2] == ' '
+                    )
+                ):
                     line_text += ' '
             line_texts.append(line_text)
             line_span_texts = [span2['text']]
@@ -190,7 +187,7 @@ def extract_text_from_spans(spans, join_with_space=True, remove_integer_superscr
             line_span_texts.append(span2['text'])
     line_text = join_char.join(line_span_texts)
     line_texts.append(line_text)
-            
+
     return join_char.join(line_texts).strip()
 
 
@@ -209,16 +206,17 @@ def extract_table_xmls_from_document(xml_string):
 
     table_starts = [m.start() for m in re.finditer("<table-wrap |<table-wrap>", xml_string)]
     table_ends = [m.end() for m in re.finditer("</table-wrap>", xml_string)]
-    if not len(table_starts) == len(table_ends):
+    if len(table_starts) != len(table_ends):
         print("Could not match up all table-wrap begins and ends")
         return None
 
     for table_start, table_end in zip(table_starts, table_ends):
-        table_dict = {}
-        table_dict['xml_table_wrap_start_character_index'] = table_start
-        table_dict['xml_table_wrap_end_character_index'] = table_end
+        table_dict = {
+            'xml_table_wrap_start_character_index': table_start,
+            'xml_table_wrap_end_character_index': table_end,
+        }
         table_dicts.append(table_dict)
-        
+
     return table_dicts
 
 

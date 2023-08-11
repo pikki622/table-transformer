@@ -119,7 +119,7 @@ class ONNXExporterTester(unittest.TestCase):
         # validate the exported model with onnx runtime
         for test_inputs in inputs_list:
             with torch.no_grad():
-                if isinstance(test_inputs, torch.Tensor) or isinstance(test_inputs, list):
+                if isinstance(test_inputs, (torch.Tensor, list)):
                     test_inputs = (nested_tensor_from_tensor_list(test_inputs),)
                 test_ouputs = model(*test_inputs)
                 if isinstance(test_ouputs, torch.Tensor):
@@ -142,7 +142,9 @@ class ONNXExporterTester(unittest.TestCase):
 
         ort_session = onnxruntime.InferenceSession(onnx_io.getvalue())
         # compute onnxruntime output prediction
-        ort_inputs = dict((ort_session.get_inputs()[i].name, inpt) for i, inpt in enumerate(inputs))
+        ort_inputs = {
+            ort_session.get_inputs()[i].name: inpt for i, inpt in enumerate(inputs)
+        }
         ort_outs = ort_session.run(None, ort_inputs)
         for i in range(0, len(outputs)):
             try:
